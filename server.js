@@ -16,7 +16,7 @@ const server = http.createServer(app);
 const TURNSTILE_SECRET = '1x0000000000000000000000000000000AA';
 
 // Site password from environment variable (hidden from GitHub via .env + .gitignore)
-const SITE_PASSWORD = process.env.SITE_PASSWORD || 'changeme';
+const SITE_PASSWORD = process.env.SITE_PASSWORD || 'Y##';
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
