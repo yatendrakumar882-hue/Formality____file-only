@@ -1,260 +1,118 @@
-import { connect } from 'cloudflare:sockets';
+import 'dotenv/config';
+import express from 'express';
+import http from 'http';
+import nodemailer from 'nodemailer';
+import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const TURNSTILE_SECRET = '1x0000000000000000000000000000000AA';
-const MAX_RECIPIENTS_PER_BATCH = 10;
-const SMTP_PORT = 465;
-const SMTP_HOST = 'smtp.gmail.com';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-};
+const app = express();
+const server = http.createServer(app);
 
-export default {
-    async fetch(request) {
-        if (request.method === 'OPTIONS') {
-            return new Response(null, { headers: corsHeaders });
-        }
+const SITE_PASSWORD = process.env.SITE_PASSWORD || 'changeme';
 
-        const url = new URL(request.url);
+app.use(cors());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.static(path.join(__dirname, "public")));
 
-        try {
-            if (url.pathname === '/api/verify' && request.method === 'POST') {
-                return await handleVerify(request);
-            }
+const transporters = new Map();
 
-            if (url.pathname === '/api/send-batch' && request.method === 'POST') {
-                return await handleSendBatch(request);
-            }
+function getTransporter(email, appPassword) {
+  const cleanEmail = email.toLowerCase().trim();
+  const cacheKey = `${cleanEmail}_${appPassword}`;
 
-            return new Response('API running', { headers: corsHeaders });
-
-        } catch (err) {
-            return jsonResponse({ success: false, message: err.message }, 500);
-        }
-    }
-};
-
-function jsonResponse(body, status = 200) {
-    return new Response(JSON.stringify(body), {
-        status,
-        headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-        }
+  if (!transporters.has(cacheKey)) {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: cleanEmail,
+        pass: appPassword
+      }
     });
+    transporters.set(cacheKey, transporter);
+  }
+  return transporters.get(cacheKey);
 }
 
-/* ---------------- TURNSTILE ---------------- */
+// Authentication
+app.post("/api/auth", (req, res) => {
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ success: false, message: "Password is required" });
+  }
+  if (password === SITE_PASSWORD) {
+    return res.json({ success: true, message: "Access granted" });
+  }
+  return res.status(401).json({ success: false, message: "Incorrect password" });
+});
 
-async function verifyTurnstile(token, ip) {
-    if (!token) return false;
+// Verify Credentials
+app.post("/api/verify", async (req, res) => {
+  const { email, appPassword } = req.body;
 
-    const formData = new FormData();
-    formData.append('secret', TURNSTILE_SECRET);
-    formData.append('response', token);
-    formData.append('remoteip', ip);
+  if (!email || !appPassword) {
+    return res.status(400).json({ success: false, message: "Credentials required" });
+  }
 
-    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-        method: 'POST',
-        body: formData
-    });
+  try {
+    const transporter = getTransporter(email, appPassword);
+    await transporter.verify();
+    return res.json({ success: true, message: "SMTP connection verified" });
+  } catch (error) {
+    return res.status(401).json({ success: false, message: "Authentication failed" });
+  }
+});
 
-    const data = await res.json();
-    return data.success;
-}
+// Stream Endpoint
+app.post("/api/send-stream", async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
 
-/* ---------------- VERIFY ---------------- */
+  const { email, appPassword, senderName, subject, messageBody, recipients } = req.body;
 
-async function handleVerify(request) {
-    const { email, appPassword, cfToken } = await request.json();
-    const ip = request.headers.get('CF-Connecting-IP');
+  if (!email || !appPassword || !Array.isArray(recipients) || recipients.length === 0) {
+    res.write(`data: ${JSON.stringify({ success: false, error: "Missing required fields" })}\n\n`);
+    res.end();
+    return;
+  }
 
-    if (!email || !appPassword) {
-        return jsonResponse({ success: false, message: "Missing credentials" }, 400);
+  const senderEmail = email.toLowerCase().trim();
+  const transporter = getTransporter(email, appPassword);
+  const cleanSenderName = (senderName || "").replace(/"/g, "").trim();
+
+  for (let index = 0; index < recipients.length; index++) {
+    const recipient = recipients[index] ? recipients[index].trim() : "";
+    if (!recipient) continue;
+
+    const mailOptions = {
+      from: cleanSenderName ? `"${cleanSenderName}" <${senderEmail}>` : senderEmail,
+      to: recipient,
+      subject: subject,
+      text: messageBody
+    };
+
+    try {
+      await transporter.sendMail(mailOptions);
+      res.write(`data: ${JSON.stringify({ success: true, recipient })}\n\n`);
+    } catch (error) {
+      res.write(`data: ${JSON.stringify({ success: false, recipient, error: error.message })}\n\n`);
     }
 
-    const isHuman = await verifyTurnstile(cfToken, ip);
-    if (!isHuman) {
-        return jsonResponse({ success: false, message: "Spam check failed" }, 401);
+    // Standard rate delay (1.5 seconds)
+    if (index < recipients.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
+  }
 
-    const client = new SmtpClient(SMTP_HOST, SMTP_PORT);
-    const result = await client.verifyAuth(email, appPassword);
+  res.write("data: [DONE]\n\n");
+  res.end();
+});
 
-    return result.success
-        ? jsonResponse({ success: true })
-        : jsonResponse({ success: false, message: result.error }, 401);
-}
-
-/* ---------------- SEND ---------------- */
-
-async function handleSendBatch(request) {
-    const { email, appPassword, senderName, subject, messageBody, recipients, cfToken } = await request.json();
-    const ip = request.headers.get('CF-Connecting-IP');
-
-    if (!email || !appPassword || !recipients?.length) {
-        return jsonResponse({ success: false, message: "Missing fields" }, 400);
-    }
-
-    if (recipients.length > MAX_RECIPIENTS_PER_BATCH) {
-        return jsonResponse({ success: false, message: "Max 10 emails per batch" }, 400);
-    }
-
-    const isHuman = await verifyTurnstile(cfToken, ip);
-    if (!isHuman) {
-        return jsonResponse({ success: false, message: "Spam check failed" }, 401);
-    }
-
-    let sent = 0;
-    let failed = 0;
-
-    // Reuse single SMTP connection for all recipients in batch
-    const client = new SmtpClient(SMTP_HOST, SMTP_PORT);
-
-    for (const to of recipients) {
-        const result = await client.sendMail(email, appPassword, to, subject, messageBody, senderName);
-
-        if (result.success) sent++;
-        else {
-            console.error(result.error);
-            failed++;
-        }
-
-        // Minimal delay between emails (100ms) - enough for rate limiting without being excessive
-        await new Promise(r => setTimeout(r, 100));
-    }
-
-    try { await client.write('QUIT'); } catch { }
-
-    return jsonResponse({
-        success: true,
-        results: { sent, failed }
-    });
-}
-
-/* ---------------- SMTP CLIENT ---------------- */
-
-class SmtpClient {
-    constructor(host, port) {
-        this.socket = connect({ hostname: host, port }, { secureTransport: 'on' });
-        this.writer = this.socket.writable.getWriter();
-        this.reader = this.socket.readable.getReader();
-        this.decoder = new TextDecoder();
-        this.encoder = new TextEncoder();
-        this.buffer = '';
-    }
-
-    async readResponse() {
-        let full = '';
-
-        while (true) {
-            const index = this.buffer.indexOf('\n');
-
-            if (index !== -1) {
-                const line = this.buffer.slice(0, index + 1);
-                this.buffer = this.buffer.slice(index + 1);
-                full += line;
-
-                if (line[3] === ' ') return full.trim();
-            } else {
-                const { value, done } = await this.reader.read();
-                if (value) this.buffer += this.decoder.decode(value);
-                if (done) break;
-            }
-        }
-
-        return full.trim();
-    }
-
-    async write(cmd) {
-        await this.writer.write(this.encoder.encode(cmd + '\r\n'));
-    }
-
-    async verifyAuth(email, password) {
-        try {
-            await this.readResponse();
-
-            await this.write('EHLO test');
-            await this.readResponse();
-
-            await this.write('AUTH LOGIN');
-            await this.readResponse();
-
-            await this.write(btoa(email));
-            await this.readResponse();
-
-            await this.write(btoa(password));
-            const res = await this.readResponse();
-
-            await this.write('QUIT');
-
-            return res.startsWith('235')
-                ? { success: true }
-                : { success: false, error: res };
-
-        } catch (e) {
-            return { success: false, error: e.message };
-        }
-    }
-
-    async sendMail(email, password, to, subject, body, senderName) {
-        try {
-            await this.readResponse();
-
-            await this.write('EHLO securemail');
-            await this.readResponse();
-
-            await this.write('AUTH LOGIN');
-            await this.readResponse();
-
-            await this.write(btoa(email));
-            await this.readResponse();
-
-            await this.write(btoa(password));
-            const auth = await this.readResponse();
-            if (!auth.startsWith('235')) throw new Error(auth);
-
-            await this.write(`MAIL FROM:<${email}>`);
-            await this.readResponse();
-
-            await this.write(`RCPT TO:<${to}>`);
-            await this.readResponse();
-
-            await this.write('DATA');
-            await this.readResponse();
-
-            const messageId = `<${Date.now()}@securemail>`;
-            const date = new Date().toUTCString();
-
-            const msg = [
-                `From: "${senderName}" <${email}>`,
-                `To: ${to}`,
-                `Subject: ${subject}`,
-                `Date: ${date}`,
-                `Message-ID: ${messageId}`,
-                `MIME-Version: 1.0`,
-                `Content-Type: text/plain; charset=UTF-8`,
-                `X-Mailer: SecureMailConsole`,
-                '',
-                body,
-                '.',
-                ''
-            ].join('\r\n');
-
-            await this.write(msg);
-
-            const result = await this.readResponse();
-            if (!result.startsWith('250')) throw new Error(result);
-
-            await this.write('QUIT');
-
-            return { success: true };
-
-        } catch (e) {
-            try { await this.write('QUIT'); } catch { }
-            return { success: false, error: e.message };
-        }
-    }
-}
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+});
