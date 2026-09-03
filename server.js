@@ -23,7 +23,6 @@ const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x000000000000
 const globalSession = { stopRequested: false };
 const poolMap = new Map();
 
-// Express Configuration
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -61,26 +60,25 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   AUTHENTIC GOOGLE WEBMAIL ENGINE TRANSPORTER (Port 465 SSL Direct)
-   - Concurrency strictly 1 to keep Google trust score 100% intact
+   AUTHENTIC CLIENT TRANSPORTER POOL (Port 465 SSL Direct)
    ========================================================================== */
 function getInboxTransporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `google_direct_${cleanEmail}_${cleanPass}`;
+  const key = `client_ssl_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Native direct SSL (highest reputation)
+      secure: true,
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 1, // Single continuous socket prevents Google anti-spam flag
-      maxMessages: 1000,
+      maxConnections: 1, // Single connection preserves Google human score
+      maxMessages: 100,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -174,7 +172,7 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// 100% Genuine Webmail MIME Synchronization (No Fake Headers, No Spacer Traps)
+// Organic Clean Document Structure
 function buildCanonicalEmail(bodyText) {
   if (!bodyText) return { text: '', html: '' };
 
@@ -182,16 +180,13 @@ function buildCanonicalEmail(bodyText) {
   const isHtml = /<[a-z][\s\S]*>/i.test(rawClean);
   const plainText = rawClean.replace(/<[^>]+>/g, '').trim();
 
-  const fontStyle = "font-family:Arial,Helvetica,sans-serif;font-size:11pt;color:#222222;line-height:1.5;";
-
   let htmlContent = '';
   if (isHtml) {
-    htmlContent = `<div dir="ltr" style="${fontStyle}">${rawClean}</div>`;
+    htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6; margin: 0; padding: 0;">${rawClean}</body></html>`;
   } else {
     const paragraphs = rawClean.split(/\n\n+/);
-    htmlContent = `<div dir="ltr" style="${fontStyle}">` +
-      paragraphs.map(p => `<p style="margin:0 0 16px 0;${fontStyle}">${p.replace(/\n/g, '<br>')}</p>`).join('') +
-      `</div>`;
+    const bodyHtml = paragraphs.map(p => `<p style="margin: 0 0 16px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6;">${p.replace(/\n/g, '<br>')}</p>`).join('');
+    htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin: 0; padding: 0;">${bodyHtml}</body></html>`;
   }
 
   return { text: plainText, html: htmlContent };
@@ -233,8 +228,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   ORGANIC INBOX PIPELINE (Auto-Paced Sequential Streaming)
-   - Ensures continuous inbox placement for all bulk emails
+   SAFE DISPATCH STREAMING
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -287,14 +281,18 @@ app.post('/api/send-stream', async (req, res) => {
       const personalizedBody = personalizeContent(messageBody, recipient);
       const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
 
-      // Pure Native Mail Schema:
-      // Google automatically signs DKIM, ARC & authentic Message-ID
+      // Official Client Standard Envelope
       const mailOptions = {
         from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
         to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
         subject: personalizedSubject || 'Update',
         html: cleanHtml,
-        text: plainText
+        text: plainText,
+        headers: {
+          'X-Mailer': 'Thunderbird 115.8.0',
+          'User-Agent': 'Mozilla Thunderbird',
+          'Content-Language': 'en'
+        }
       };
 
       await transporter.sendMail(mailOptions);
@@ -309,11 +307,10 @@ app.post('/api/send-stream', async (req, res) => {
       res.write(`data: ${JSON.stringify(errPayload)}\n\n`);
     }
 
-    // Organic Human Jitter (1.8s - 2.8s)
-    // Ye rate-limiting aur heuristic burn ko 100% bypass karta hai
+    // Human interval (2.0s - 3.2s) to bypass bulk-sending heuristics
     if (i < recipients.length - 1 && !globalSession.stopRequested) {
-      const humanDelay = Math.floor(1800 + Math.random() * 1000);
-      await new Promise(resolve => setTimeout(resolve, humanDelay));
+      const safePace = Math.floor(2000 + Math.random() * 1200);
+      await new Promise(resolve => setTimeout(resolve, safePace));
     }
   }
 
@@ -327,12 +324,11 @@ app.post('/api/stop', (req, res) => {
   res.json({ success: true, message: 'Sending process stopped' });
 });
 
-// UI Catch-All Route
 app.get('*', (req, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+  const filePath = path.join(process.cwd(), 'public', 'index.html');
+  res.sendFile(filePath);
 });
 
-// Start Server locally; Export for Vercel
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   server.listen(PORT, () => {
     console.log(`Mailer server running safely on port ${PORT}`);
