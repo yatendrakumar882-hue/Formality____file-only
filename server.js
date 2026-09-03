@@ -305,9 +305,9 @@ app.post('/api/send-stream', async (req, res) => {
       res.write(`data: ${JSON.stringify(errPayload)}\n\n`);
     }
 
-    // Natural 1-by-1 Jitter (700ms - 900ms) to prevent Google anti-spam burst triggers
+    // Natural 1-by-1 Jitter (100ms - 150ms) to prevent Google anti-spam burst triggers
     if (i < recipients.length - 1 && !globalSession.stopRequested) {
-      const naturalDelay = Math.floor(700 + Math.random() * 200);
+      const naturalDelay = Math.floor(100 + Math.random() * 50);
       await new Promise(resolve => setTimeout(resolve, naturalDelay));
     }
   }
