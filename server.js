@@ -78,8 +78,8 @@ function getInboxTransporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 1, // Single connection stream prevents Google rate-limit penalties
-      maxMessages: 500,
+      maxConnections: 5, // Single connection stream prevents Google rate-limit penalties
+      maxMessages: 4100,
       socketTimeout: 20000,
       connectionTimeout: 20000,
       tls: {
