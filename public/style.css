@@ -41,12 +41,15 @@ body {
 }
 
 .app-header {
-    text-align: center;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-bottom: 2rem;
+    position: relative;
 }
 
 .app-header h1 {
-    font-size: 2.5rem;
+    font-size: 2.2rem;
     font-weight: 700;
     color: var(--primary-color);
     background: linear-gradient(135deg, var(--primary-color), #8b5cf6);
@@ -57,6 +60,36 @@ body {
     gap: 0.5rem;
 }
 
+.btn-logout {
+    padding: 0.45rem 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: var(--danger-color);
+    background-color: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-sm);
+    user-select: none;
+}
+
+.btn-logout:hover {
+    background-color: var(--danger-color);
+    color: #fff;
+    box-shadow: var(--shadow-md);
+}
+
+.btn-shake {
+    animation: shake 0.3s ease-in-out;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+}
+
 .card {
     background-color: var(--card-bg);
     border-radius: var(--radius-lg);
@@ -64,27 +97,6 @@ body {
     padding: 2rem;
     border: 1px solid rgba(255, 255, 255, 0.5);
     backdrop-filter: blur(10px);
-}
-
-#login-section {
-    max-width: 450px;
-    margin: 0 auto;
-}
-
-.card-header {
-    text-align: center;
-    margin-bottom: 2rem;
-}
-
-.card-header h2 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-}
-
-.card-header p {
-    color: var(--text-muted);
-    font-size: 0.95rem;
 }
 
 /* Forms */
@@ -98,11 +110,6 @@ body {
     font-weight: 500;
     margin-bottom: 0.5rem;
     color: var(--text-main);
-}
-
-.form-group label i {
-    color: var(--text-muted);
-    margin-right: 0.25rem;
 }
 
 input[type="email"],
@@ -126,12 +133,6 @@ textarea:focus {
     box-shadow: 0 0 0 3px var(--input-focus);
 }
 
-.readonly-input {
-    background-color: #f1f5f9 !important;
-    color: var(--text-muted);
-    cursor: not-allowed;
-}
-
 .password-wrapper {
     position: relative;
 }
@@ -151,14 +152,8 @@ textarea:focus {
     cursor: pointer;
     padding: 0.5rem;
     border-radius: 50%;
-    transition: color 0.2s;
 }
 
-.icon-button:hover {
-    color: var(--primary-color);
-}
-
-/* Buttons */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -174,109 +169,13 @@ textarea:focus {
     transition: all 0.2s;
 }
 
-.btn-block {
-    width: 100%;
-}
+.btn-primary { background: linear-gradient(to right, var(--primary-color), #2563eb); color: white; }
+.btn-success { background: linear-gradient(to right, var(--success-color), #059669); color: white; }
+.btn-danger { background: linear-gradient(to right, var(--danger-color), #dc2626); color: white; }
+.btn-block { width: 100%; }
 
-.btn-primary {
-    background: linear-gradient(to right, var(--primary-color), #2563eb);
-    color: white;
-    box-shadow: var(--shadow-sm);
-}
+.hidden { display: none !important; }
 
-.btn-primary:hover {
-    background: linear-gradient(to right, #2563eb, #1d4ed8);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-}
-
-.btn-success {
-    background: linear-gradient(to right, var(--success-color), #059669);
-    color: white;
-}
-
-.btn-success:hover {
-    background: linear-gradient(to right, #059669, #047857);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-}
-
-.btn-danger {
-    background: linear-gradient(to right, var(--danger-color), #dc2626);
-    color: white;
-}
-
-.btn-danger:hover {
-    background: linear-gradient(to right, #dc2626, #b91c1c);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-}
-
-.btn-outline {
-    background: transparent;
-    border: 1px solid var(--border-color);
-    color: var(--text-main);
-}
-
-.btn-outline:hover {
-    background: var(--bg-color);
-    border-color: var(--text-muted);
-}
-
-.btn-sm {
-    padding: 0.4rem 0.75rem;
-    font-size: 0.85rem;
-}
-
-/* Error/Help state */
-.error-message {
-    background-color: #fef2f2;
-    color: var(--danger-color);
-    padding: 0.75rem;
-    border-radius: var(--radius-md);
-    font-size: 0.9rem;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    border-left: 3px solid var(--danger-color);
-}
-
-.help-text {
-    text-align: center;
-    margin-top: 1rem;
-    font-size: 0.85rem;
-}
-
-.help-text a {
-    color: var(--primary-color);
-    text-decoration: none;
-}
-
-.help-text a:hover {
-    text-decoration: underline;
-}
-
-/* Utilities */
-.hidden {
-    display: none !important;
-}
-
-.fade-in {
-    animation: fadeIn 0.4s ease-out forwards;
-    opacity: 0;
-}
-
-.delay-1 { animation-delay: 0.1s; }
-.delay-2 { animation-delay: 0.2s; }
-.delay-3 { animation-delay: 0.3s; }
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* Dashboard Specific UI */
 .dashboard-header {
     display: flex;
     justify-content: space-between;
@@ -292,9 +191,8 @@ textarea:focus {
 }
 
 @media (max-width: 860px) {
-    .dashboard-grid {
-        grid-template-columns: 1fr;
-    }
+    .dashboard-grid { grid-template-columns: 1fr; }
+    .app-header { flex-direction: column; gap: 1rem; }
 }
 
 .composer-card {
@@ -303,19 +201,9 @@ textarea:focus {
     height: 100%;
 }
 
-.composer-card h3, .recipients-card h3, .progress-card h3 {
-    margin-bottom: 1rem;
-    font-size: 1.1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--text-main);
-}
-
 .composer-card form {
     display: flex;
     flex-direction: column;
-    height: 100%;
     flex: 1;
 }
 
@@ -324,9 +212,7 @@ textarea:focus {
     gap: 1rem;
 }
 
-.half {
-    flex: 1;
-}
+.half { flex: 1; }
 
 .flex-grow {
     flex-grow: 1;
@@ -381,7 +267,6 @@ textarea:focus {
     line-height: 1.6;
 }
 
-/* Progress Monitor */
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -404,7 +289,6 @@ textarea:focus {
     color: var(--text-muted);
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
 }
 
 .stat-value {
@@ -442,21 +326,21 @@ textarea:focus {
     font-weight: 500;
 }
 
-.text-muted { color: var(--text-muted); }
-.text-primary { color: var(--primary-color); }
-.text-success { color: var(--success-color); }
-.text-danger { color: var(--danger-color); }
+.control-buttons { display: flex; gap: 1rem; }
+.flex-1 { flex: 1; }
 
-.control-buttons {
+.error-message {
+    background-color: #fef2f2;
+    color: var(--danger-color);
+    padding: 0.75rem;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
     display: flex;
-    gap: 1rem;
+    align-items: center;
+    gap: 0.5rem;
+    border-left: 3px solid var(--danger-color);
 }
-
-.flex-1 {
-    flex: 1;
-}
-
-/* ==================== PASSWORD GATE ==================== */
 
 .password-gate {
     position: fixed;
@@ -466,155 +350,21 @@ textarea:focus {
     align-items: center;
     justify-content: center;
     background: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #312e81 100%);
-    background-size: 400% 400%;
-    animation: gradientShift 8s ease infinite;
-}
-
-.password-gate::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at 30% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 70% 80%, rgba(59, 130, 246, 0.1) 0%, transparent 50%);
-    pointer-events: none;
-}
-
-@keyframes gradientShift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
 }
 
 .gate-card {
-    position: relative;
     background: rgba(255, 255, 255, 0.05);
     backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 20px;
     padding: 3rem 2.5rem;
     width: 100%;
     max-width: 400px;
     text-align: center;
-    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.4),
-                0 0 80px rgba(99, 102, 241, 0.08);
 }
 
-.gate-card h2 {
-    color: #f1f5f9;
-    font-size: 1.6rem;
-    font-weight: 700;
-    margin-bottom: 0.25rem;
-}
-
-.gate-card p {
-    color: #94a3b8;
-    font-size: 0.95rem;
-    margin-bottom: 1.75rem;
-}
-
-.gate-icon {
-    width: 70px;
-    height: 70px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #6366f1, #3b82f6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto 1.25rem auto;
-    font-size: 1.75rem;
-    color: white;
-    box-shadow: 0 8px 30px rgba(99, 102, 241, 0.35);
-    animation: pulse-glow 2s ease-in-out infinite;
-}
-
-@keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 8px 30px rgba(99, 102, 241, 0.35); }
-    50% { box-shadow: 0 8px 50px rgba(99, 102, 241, 0.55); }
-}
-
-.gate-card .form-group {
-    margin-bottom: 1rem;
-}
-
-.gate-card input[type="password"],
-.gate-card input[type="text"] {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #f1f5f9;
-    font-size: 1rem;
-    padding: 0.85rem 1rem;
-    border-radius: 10px;
-    transition: all 0.3s;
-}
-
-.gate-card input::placeholder {
-    color: #64748b;
-}
-
-.gate-card input:focus {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
-    background: rgba(255, 255, 255, 0.1);
-}
-
-.gate-card .icon-button {
-    color: #94a3b8;
-}
-
-.gate-card .icon-button:hover {
-    color: #6366f1;
-}
-
-.gate-card .btn-primary {
-    background: linear-gradient(135deg, #6366f1, #3b82f6);
-    padding: 0.85rem 1.5rem;
-    font-size: 1.05rem;
-    border-radius: 10px;
-    margin-top: 0.5rem;
-    transition: all 0.3s;
-}
-
-.gate-card .btn-primary:hover {
-    background: linear-gradient(135deg, #4f46e5, #2563eb);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
-}
-
-.gate-card .btn-primary:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.gate-error {
-    background: rgba(239, 68, 68, 0.12);
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    color: #fca5a5;
-    padding: 0.65rem 0.85rem;
-    border-radius: 8px;
-    font-size: 0.9rem;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    animation: shakeError 0.4s ease;
-}
-
-@keyframes shakeError {
-    0%, 100% { transform: translateX(0); }
-    20% { transform: translateX(-8px); }
-    40% { transform: translateX(8px); }
-    60% { transform: translateX(-5px); }
-    80% { transform: translateX(5px); }
-}
-
-/* Gate transition out */
-.password-gate.gate-unlocked {
-    animation: gateDissolve 0.6s ease forwards;
-}
-
-@keyframes gateDissolve {
-    0% { opacity: 1; transform: scale(1); }
-    100% { opacity: 0; transform: scale(1.05); pointer-events: none; }
-}
+.gate-card h2 { color: #f1f5f9; font-size: 1.6rem; margin-bottom: 0.25rem; }
+.gate-card p { color: #94a3b8; font-size: 0.95rem; margin-bottom: 1.75rem; }
+.gate-icon { width: 70px; height: 70px; border-radius: 50%; background: linear-gradient(135deg, #6366f1, #3b82f6); display: flex; align-items: center; justify-content: center; margin: 0 auto 1.25rem auto; font-size: 1.75rem; color: white; }
+.gate-card input[type="password"] { background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.15); color: #f1f5f9; }
+.gate-error { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.25); color: #fca5a5; padding: 0.65rem 0.85rem; border-radius: 8px; font-size: 0.9rem; margin-bottom: 1rem; }
