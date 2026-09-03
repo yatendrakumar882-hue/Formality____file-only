@@ -61,7 +61,7 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   GMAIL 6-CONNECTION TRANSPORTER POOL
+   6-CONNECTION HIGH REPUTATION TRANSPORTER POOL
    ========================================================================== */
 function getPort587Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
@@ -79,7 +79,7 @@ function getPort587Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 6, // 6 concurrent connections for 6-email batch
+      maxConnections: 6, // 6 concurrent sockets
       maxMessages: 2000,
       socketTimeout: 30000,
       connectionTimeout: 30000
@@ -329,7 +329,7 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 6-email blitches (1.5s - 2.0s) to keep IP reputation safe
+    // Cooling pause between 6-email blitches (1.5s - 2.0s)
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
       const cooldown = Math.floor(1500 + Math.random() * 500);
       await new Promise(resolve => setTimeout(resolve, cooldown));
