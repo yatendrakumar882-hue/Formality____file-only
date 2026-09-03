@@ -60,12 +60,12 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   AUTHENTIC CLIENT TRANSPORTER POOL (Port 465 SSL Direct)
+   2-SOCKET DEDICATED SSL TRANSPORTER (Port 465)
    ========================================================================== */
-function getInboxTransporter(email, appPassword) {
+function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `client_ssl_${cleanEmail}_${cleanPass}`;
+  const key = `inbox2_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
@@ -77,8 +77,8 @@ function getInboxTransporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 1, // Single connection preserves Google human score
-      maxMessages: 100,
+      maxConnections: 2, // Exact 2 connections for 2-batch blitch
+      maxMessages: 1000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -148,8 +148,7 @@ function parseSpintax(text) {
     spun = spun.replace(regex, (_, choices) => {
       if (!choices.includes('|')) return choices;
       const options = choices.split('|');
-      const pick = options[Math.floor(Math.random() * options.length)];
-      return pick ? pick.trim() : '';
+      return options[Math.floor(Math.random() * options.length)].trim();
     });
     iterations++;
   }
@@ -172,7 +171,7 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Organic Clean Document Structure
+// Organic 1-on-1 Clean Structure (No Fake Tags, No Spam Fingerprints)
 function buildCanonicalEmail(bodyText) {
   if (!bodyText) return { text: '', html: '' };
 
@@ -180,13 +179,16 @@ function buildCanonicalEmail(bodyText) {
   const isHtml = /<[a-z][\s\S]*>/i.test(rawClean);
   const plainText = rawClean.replace(/<[^>]+>/g, '').trim();
 
+  const fontStyle = "font-family:Arial,Helvetica,sans-serif;font-size:11pt;color:#222222;line-height:1.5;";
+
   let htmlContent = '';
   if (isHtml) {
-    htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6; margin: 0; padding: 0;">${rawClean}</body></html>`;
+    htmlContent = `<div dir="ltr" style="${fontStyle}">${rawClean}</div>`;
   } else {
     const paragraphs = rawClean.split(/\n\n+/);
-    const bodyHtml = paragraphs.map(p => `<p style="margin: 0 0 16px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6;">${p.replace(/\n/g, '<br>')}</p>`).join('');
-    htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin: 0; padding: 0;">${bodyHtml}</body></html>`;
+    htmlContent = `<div dir="ltr" style="${fontStyle}">` +
+      paragraphs.map(p => `<p style="margin:0 0 16px 0;${fontStyle}">${p.replace(/\n/g, '<br>')}</p>`).join('') +
+      `</div>`;
   }
 
   return { text: plainText, html: htmlContent };
@@ -216,7 +218,7 @@ app.post('/api/verify', async (req, res) => {
   }
 
   try {
-    const transporter = getInboxTransporter(email, appPassword);
+    const transporter = getPort465Transporter(email, appPassword);
     await transporter.verify();
     return res.json({ success: true, message: 'SMTP verified successfully' });
   } catch (error) {
@@ -228,7 +230,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   SAFE DISPATCH STREAMING
+   SAFE 2-BATCH STREAMING (1 Blitch = 2 Emails)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -260,57 +262,69 @@ app.post('/api/send-stream', async (req, res) => {
     try { res.write(': keep-alive\n\n'); } catch {}
   }, 2500);
 
-  const transporter = getInboxTransporter(email, appPassword);
+  const transporter = getPort465Transporter(email, appPassword);
+  const BATCH_SIZE = 2; // Strict 2 emails per blitch
 
-  for (let i = 0; i < recipients.length; i++) {
+  for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
       res.write(`data: ${JSON.stringify({ success: false, error: 'Stopped by User' })}\n\n`);
       break;
     }
 
-    const rawRecipient = recipients[i];
-    const recipient = parseRecipientData(rawRecipient);
+    const batch = recipients.slice(i, i + BATCH_SIZE);
 
-    if (!recipient.email) {
-      res.write(`data: ${JSON.stringify({ success: false, recipient: '', error: 'Invalid Email' })}\n\n`);
-      continue;
-    }
+    const sendPromises = batch.map(async (rawRecipient, idx) => {
+      const recipient = parseRecipientData(rawRecipient);
 
-    try {
-      const personalizedSubject = personalizeContent(subject, recipient);
-      const personalizedBody = personalizeContent(messageBody, recipient);
-      const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
+      if (!recipient.email) {
+        return { success: false, recipient: '', error: 'Invalid Email' };
+      }
 
-      // Official Client Standard Envelope
-      const mailOptions = {
-        from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
-        to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-        subject: personalizedSubject || 'Update',
-        html: cleanHtml,
-        text: plainText,
-        headers: {
-          'X-Mailer': 'Thunderbird 115.8.0',
-          'User-Agent': 'Mozilla Thunderbird',
-          'Content-Language': 'en'
+      // Micro stagger (100ms) between the 2 emails to prevent simultaneous handshake lock
+      if (idx > 0) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      try {
+        const personalizedSubject = personalizeContent(subject, recipient);
+        const personalizedBody = personalizeContent(messageBody, recipient);
+        const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
+
+        // Pure standard mail options (No spoofed User-Agent, No fake Thunderbird headers)
+        const mailOptions = {
+          from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
+          to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
+          subject: personalizedSubject || 'Update',
+          html: cleanHtml,
+          text: plainText
+        };
+
+        await transporter.sendMail(mailOptions);
+        return { success: true, recipient: recipient.email, name: recipient.name };
+
+      } catch (err) {
+        return { success: false, recipient: recipient.email, error: err.message };
+      }
+    });
+
+    const results = await Promise.allSettled(sendPromises);
+
+    for (const resItem of results) {
+      if (resItem.status === 'fulfilled') {
+        const payload = resItem.value;
+        if (payload.success) {
+          io.emit('mail_sent', payload);
+        } else {
+          io.emit('mail_error', payload);
         }
-      };
-
-      await transporter.sendMail(mailOptions);
-
-      const payload = { success: true, recipient: recipient.email, name: recipient.name };
-      io.emit('mail_sent', payload);
-      res.write(`data: ${JSON.stringify(payload)}\n\n`);
-
-    } catch (err) {
-      const errPayload = { success: false, recipient: recipient.email, error: err.message };
-      io.emit('mail_error', errPayload);
-      res.write(`data: ${JSON.stringify(errPayload)}\n\n`);
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      }
     }
 
-    // Human interval (2.0s - 3.2s) to bypass bulk-sending heuristics
-    if (i < recipients.length - 1 && !globalSession.stopRequested) {
-      const safePace = Math.floor(2000 + Math.random() * 1200);
-      await new Promise(resolve => setTimeout(resolve, safePace));
+    // Cooling pause between 2-email blitches (2.5s - 3.5s) to bypass bulk spam heuristic
+    if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
+      const safeCooldown = Math.floor(2500 + Math.random() * 1000);
+      await new Promise(resolve => setTimeout(resolve, safeCooldown));
     }
   }
 
