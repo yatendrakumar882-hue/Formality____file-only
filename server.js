@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,27 +62,27 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   8-CONNECTION GMAIL SSL TRANSPORTER POOL (Port 465 High Trust)
+   6-CONNECTION GMAIL DIRECT SSL TRANSPORTER (Port 465)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox8_${cleanEmail}_${cleanPass}`;
+  const key = `inbox6_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Direct SSL handshake for clean inbox delivery
+      secure: true, // Native SSL handshake
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 8, // Exact 8 concurrent connections for 8-batch
-      maxMessages: 4000,
-      socketTimeout: 30000,
-      connectionTimeout: 30000,
+      maxConnections: 6, // Exact 6 concurrent sockets
+      maxMessages: 3000,
+      socketTimeout: 25000,
+      connectionTimeout: 25000,
       tls: {
         rejectUnauthorized: true,
         minVersion: 'TLSv1.2'
@@ -172,7 +173,7 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Bit-by-bit Clean Body (Zero Fake Footers / Ref Codes)
+// Organic 1-on-1 Clean Email Structure
 function buildCanonicalEmail(bodyText) {
   if (!bodyText) return { text: '', html: '' };
 
@@ -234,7 +235,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 8 Emails Concurrent)
+   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 6 Emails)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -270,7 +271,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 3000);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 8; // Exact 8 emails per blitch
+  const BATCH_SIZE = 6; // Exact 6 emails per blitch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -287,9 +288,9 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro-stagger inside the 8-email batch (40ms) to ensure clean parallel socket handoff
+      // Micro-jitter inside batch to prevent synchronous connection clash
       if (idx > 0) {
-        await new Promise(r => setTimeout(r, idx * 40));
+        await new Promise(r => setTimeout(r, idx * 60));
       }
 
       try {
@@ -297,13 +298,17 @@ app.post('/api/send-stream', async (req, res) => {
         const personalizedBody = personalizeContent(messageBody, recipient);
         const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
 
-        // Standard Clean Envelope without spam-trap headers
+        // Native Google Webmail Message-ID Pattern
+        const randomHex = crypto.randomBytes(12).toString('hex');
+        const customMessageId = `<CAG${randomHex}@mail.gmail.com>`;
+
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
           subject: personalizedSubject || 'Update',
           html: cleanHtml,
-          text: plainText
+          text: plainText,
+          messageId: customMessageId
         };
 
         await transporter.sendMail(mailOptions);
@@ -328,9 +333,9 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 8-email batches (1.2s - 1.8s) to prevent bulk spam classification
+    // Anti-spam cooling interval between 6-email blitches (1.4s - 1.9s)
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(1200 + Math.random() * 600);
+      const cooldown = Math.floor(1400 + Math.random() * 500);
       await new Promise(resolve => setTimeout(resolve, cooldown));
     }
   }
@@ -353,7 +358,7 @@ app.get('*', (req, res) => {
 // Start Server locally; Export for Vercel
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   server.listen(PORT, () => {
-    console.log(`Mailer server running on port ${PORT}`);
+    console.log(`Mailer server running safely on port ${PORT}`);
   });
 }
 
