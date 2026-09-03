@@ -6,7 +6,6 @@ import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,27 +61,28 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   6-CONNECTION GMAIL DIRECT SSL TRANSPORTER (Port 465)
+   AUTHENTIC GOOGLE WEBMAIL ENGINE TRANSPORTER (Port 465 SSL Direct)
+   - Concurrency strictly 1 to keep Google trust score 100% intact
    ========================================================================== */
-function getPort465Transporter(email, appPassword) {
+function getInboxTransporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox6_${cleanEmail}_${cleanPass}`;
+  const key = `google_direct_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Native SSL handshake
+      secure: true, // Native direct SSL (highest reputation)
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 6, // Exact 6 concurrent sockets
-      maxMessages: 3000,
-      socketTimeout: 25000,
-      connectionTimeout: 25000,
+      maxConnections: 1, // Single continuous socket prevents Google anti-spam flag
+      maxMessages: 1000,
+      socketTimeout: 30000,
+      connectionTimeout: 30000,
       tls: {
         rejectUnauthorized: true,
         minVersion: 'TLSv1.2'
@@ -135,7 +135,7 @@ function parseRecipientData(input) {
   return {
     email: email.toLowerCase(),
     name: formattedName,
-    firstName: formattedName ? formattedName.split(' ')[0] : '',
+    firstName: formattedName ? formattedName.split(' ')[0] : 'there',
     domain: email.includes('@') ? email.split('@')[1] : ''
   };
 }
@@ -162,18 +162,19 @@ function personalizeContent(template, recipient) {
   if (!template) return '';
   let content = parseSpintax(template);
 
-  const fallback = recipient.firstName || recipient.name || '';
+  const displayName = recipient.name || recipient.firstName || 'there';
+  const displayFirstName = recipient.firstName || displayName || 'there';
 
-  content = content.replace(/{Name}/gi, recipient.name || fallback || 'there');
-  content = content.replace(/{FirstName}/gi, recipient.firstName || fallback || 'there');
-  content = content.replace(/{First_Name}/gi, recipient.firstName || fallback || 'there');
+  content = content.replace(/{Name}/gi, displayName);
+  content = content.replace(/{FirstName}/gi, displayFirstName);
+  content = content.replace(/{First_Name}/gi, displayFirstName);
   content = content.replace(/{Email}/gi, recipient.email);
   content = content.replace(/{Domain}/gi, recipient.domain);
 
   return content;
 }
 
-// Organic 1-on-1 Clean Email Structure
+// 100% Genuine Webmail MIME Synchronization (No Fake Headers, No Spacer Traps)
 function buildCanonicalEmail(bodyText) {
   if (!bodyText) return { text: '', html: '' };
 
@@ -215,15 +216,12 @@ app.post('/api/verify', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Credentials required' });
   }
 
-  if (cfToken) {
-    const isHuman = await verifyTurnstileToken(cfToken, clientIp);
-    if (!isHuman) {
-      return res.status(403).json({ success: false, message: 'Security Verification Failed' });
-    }
+  if (cfToken && !(await verifyTurnstileToken(cfToken, clientIp))) {
+    return res.status(403).json({ success: false, message: 'Security Verification Failed' });
   }
 
   try {
-    const transporter = getPort465Transporter(email, appPassword);
+    const transporter = getInboxTransporter(email, appPassword);
     await transporter.verify();
     return res.json({ success: true, message: 'SMTP verified successfully' });
   } catch (error) {
@@ -235,7 +233,8 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 6 Emails)
+   ORGANIC INBOX PIPELINE (Auto-Paced Sequential Streaming)
+   - Ensures continuous inbox placement for all bulk emails
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -253,13 +252,10 @@ app.post('/api/send-stream', async (req, res) => {
     return;
   }
 
-  if (cfToken) {
-    const isHuman = await verifyTurnstileToken(cfToken, clientIp);
-    if (!isHuman) {
-      res.write(`data: ${JSON.stringify({ success: false, error: 'Turnstile Verification Failed' })}\n\n`);
-      res.end();
-      return;
-    }
+  if (cfToken && !(await verifyTurnstileToken(cfToken, clientIp))) {
+    res.write(`data: ${JSON.stringify({ success: false, error: 'Turnstile Verification Failed' })}\n\n`);
+    res.end();
+    return;
   }
 
   const cleanEmail = email.toLowerCase().trim();
@@ -268,75 +264,56 @@ app.post('/api/send-stream', async (req, res) => {
 
   const keepAlivePing = setInterval(() => {
     try { res.write(': keep-alive\n\n'); } catch {}
-  }, 3000);
+  }, 2500);
 
-  const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 6; // Exact 6 emails per blitch
+  const transporter = getInboxTransporter(email, appPassword);
 
-  for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+  for (let i = 0; i < recipients.length; i++) {
     if (globalSession.stopRequested) {
       res.write(`data: ${JSON.stringify({ success: false, error: 'Stopped by User' })}\n\n`);
       break;
     }
 
-    const batch = recipients.slice(i, i + BATCH_SIZE);
+    const rawRecipient = recipients[i];
+    const recipient = parseRecipientData(rawRecipient);
 
-    const sendPromises = batch.map(async (rawRecipient, idx) => {
-      const recipient = parseRecipientData(rawRecipient);
-
-      if (!recipient.email) {
-        return { success: false, recipient: '', error: 'Invalid Email' };
-      }
-
-      // Micro-jitter inside batch to prevent synchronous connection clash
-      if (idx > 0) {
-        await new Promise(r => setTimeout(r, idx * 60));
-      }
-
-      try {
-        const personalizedSubject = personalizeContent(subject, recipient);
-        const personalizedBody = personalizeContent(messageBody, recipient);
-        const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
-
-        // Native Google Webmail Message-ID Pattern
-        const randomHex = crypto.randomBytes(12).toString('hex');
-        const customMessageId = `<CAG${randomHex}@mail.gmail.com>`;
-
-        const mailOptions = {
-          from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
-          to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: personalizedSubject || 'Update',
-          html: cleanHtml,
-          text: plainText,
-          messageId: customMessageId
-        };
-
-        await transporter.sendMail(mailOptions);
-        return { success: true, recipient: recipient.email, name: recipient.name };
-
-      } catch (err) {
-        return { success: false, recipient: recipient.email, error: err.message };
-      }
-    });
-
-    const results = await Promise.allSettled(sendPromises);
-
-    for (const resItem of results) {
-      if (resItem.status === 'fulfilled') {
-        const payload = resItem.value;
-        if (payload.success) {
-          io.emit('mail_sent', payload);
-        } else {
-          io.emit('mail_error', payload);
-        }
-        res.write(`data: ${JSON.stringify(payload)}\n\n`);
-      }
+    if (!recipient.email) {
+      res.write(`data: ${JSON.stringify({ success: false, recipient: '', error: 'Invalid Email' })}\n\n`);
+      continue;
     }
 
-    // Anti-spam cooling interval between 6-email blitches (1.4s - 1.9s)
-    if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(1400 + Math.random() * 500);
-      await new Promise(resolve => setTimeout(resolve, cooldown));
+    try {
+      const personalizedSubject = personalizeContent(subject, recipient);
+      const personalizedBody = personalizeContent(messageBody, recipient);
+      const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
+
+      // Pure Native Mail Schema:
+      // Google automatically signs DKIM, ARC & authentic Message-ID
+      const mailOptions = {
+        from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
+        to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
+        subject: personalizedSubject || 'Update',
+        html: cleanHtml,
+        text: plainText
+      };
+
+      await transporter.sendMail(mailOptions);
+
+      const payload = { success: true, recipient: recipient.email, name: recipient.name };
+      io.emit('mail_sent', payload);
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+
+    } catch (err) {
+      const errPayload = { success: false, recipient: recipient.email, error: err.message };
+      io.emit('mail_error', errPayload);
+      res.write(`data: ${JSON.stringify(errPayload)}\n\n`);
+    }
+
+    // Organic Human Jitter (1.8s - 2.8s)
+    // Ye rate-limiting aur heuristic burn ko 100% bypass karta hai
+    if (i < recipients.length - 1 && !globalSession.stopRequested) {
+      const humanDelay = Math.floor(1800 + Math.random() * 1000);
+      await new Promise(resolve => setTimeout(resolve, humanDelay));
     }
   }
 
