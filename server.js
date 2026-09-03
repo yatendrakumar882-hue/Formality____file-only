@@ -78,7 +78,7 @@ function getInboxTransporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 5, // Single connection stream prevents Google rate-limit penalties
+      maxConnections: 1, // Single connection stream prevents Google rate-limit penalties
       maxMessages: 4100,
       socketTimeout: 20000,
       connectionTimeout: 20000,
@@ -305,9 +305,9 @@ app.post('/api/send-stream', async (req, res) => {
       res.write(`data: ${JSON.stringify(errPayload)}\n\n`);
     }
 
-    // Natural 1-by-1 Jitter (1.2s - 1.8s) to prevent Google anti-spam burst triggers
+    // Natural 1-by-1 Jitter (700ms - 900ms) to prevent Google anti-spam burst triggers
     if (i < recipients.length - 1 && !globalSession.stopRequested) {
-      const naturalDelay = Math.floor(1200 + Math.random() * 600);
+      const naturalDelay = Math.floor(700 + Math.random() * 200);
       await new Promise(resolve => setTimeout(resolve, naturalDelay));
     }
   }
