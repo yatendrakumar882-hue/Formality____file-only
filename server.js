@@ -60,24 +60,24 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   8-CONNECTION SSL TRANSPORTER POOL (Port 465)
+   8-CONNECTION HIGH TRUST SSL TRANSPORTER (Port 465)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox8_pool_${cleanEmail}_${cleanPass}`;
+  const key = `inbox8_clean_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Native direct SSL for trusted handshake
+      secure: true,
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 8, // Exact 8 connections for 8-batch blitch
+      maxConnections: 8,
       maxMessages: 2400,
       socketTimeout: 30000,
       connectionTimeout: 30000,
@@ -172,25 +172,40 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Any Template Safe Payload Formatter (With Micro-Entropy Hash Breaker)
-function buildSafePayload(bodyText) {
-  const cleanBody = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const hasHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
+/* ==========================================================================
+   ANTI-KEYWORD NLP MASKING ENGINE
+   ========================================================================== */
+function maskSpamKeywords(str) {
+  if (!str) return '';
+  const invisibleMask = '\u00AD'; // Zero-width soft hyphen
+  
+  return str.split(' ').map(word => {
+    // Links, variables, aur emails ko intact rakho
+    if (word.includes('@') || word.includes('http') || word.includes('{') || word.includes('<') || word.length <= 3) {
+      return word;
+    }
+    const mid = Math.floor(word.length / 2);
+    return word.slice(0, mid) + invisibleMask + word.slice(mid);
+  }).join(' ');
+}
 
-  // Generates variable trailing space so every single email has a distinct body hash
-  const noiseCount = Math.floor(Math.random() * 5) + 1;
-  const entropyTail = ' '.repeat(noiseCount);
+function buildCleanDeliveryPayload(bodyText) {
+  const rawClean = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const maskedText = maskSpamKeywords(rawClean);
+  const isHtml = /<[a-z][\s\S]*>/i.test(rawClean);
 
-  if (hasHtml) {
+  // Micro-entropy trailing space to break bulk hash match
+  const entropyTail = ' '.repeat(Math.floor(Math.random() * 4) + 1);
+
+  if (isHtml) {
     return {
-      text: cleanBody.replace(/<[^>]+>/g, '').trim() + entropyTail,
-      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${cleanBody}</div>`
+      text: maskedText.replace(/<[^>]+>/g, '').trim() + entropyTail,
+      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${maskedText}</div>`
     };
   }
 
-  // Pure plain text stream
   return {
-    text: cleanBody + entropyTail
+    text: maskedText + entropyTail
   };
 }
 
@@ -230,7 +245,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 8 Emails | 24 Emails = 3 Blitches)
+   STREAMING DISPATCH ROUTE (Exact 8 Emails Per Batch)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -263,7 +278,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 8; // 24 emails ÷ 8 = Exactly 3 blitches
+  const BATCH_SIZE = 8;
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -280,7 +295,6 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro-stagger (75ms) prevents simultaneous socket collision at SSL layer
       if (idx > 0) {
         await new Promise(r => setTimeout(r, idx * 75));
       }
@@ -288,7 +302,7 @@ app.post('/api/send-stream', async (req, res) => {
       try {
         const personalizedSubject = personalizeContent(subject, recipient);
         const personalizedBody = personalizeContent(messageBody, recipient);
-        const mailPayload = buildSafePayload(personalizedBody);
+        const mailPayload = buildCleanDeliveryPayload(personalizedBody);
 
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
@@ -319,7 +333,6 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 8-email blitches (2.5s - 3.5s) to bypass Google burst-rate limit
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
       const cooldown = Math.floor(2500 + Math.random() * 1000);
       await new Promise(resolve => setTimeout(resolve, cooldown));
@@ -336,7 +349,6 @@ app.post('/api/stop', (req, res) => {
   res.json({ success: true, message: 'Sending process stopped' });
 });
 
-// UI Catch-All Route
 app.get('*', (req, res) => {
   const filePath = path.join(process.cwd(), 'public', 'index.html');
   res.sendFile(filePath);
