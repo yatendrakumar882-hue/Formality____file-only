@@ -60,12 +60,12 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   8-CONNECTION HIGH TRUST SSL TRANSPORTER (Port 465)
+   8-SOCKET POOLED SSL TRANSPORTER (Port 465)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox8_clean_${cleanEmail}_${cleanPass}`;
+  const key = `inbox8_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
@@ -77,7 +77,7 @@ function getPort465Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 8,
+      maxConnections: 8, // 8 Parallel connections
       maxMessages: 2400,
       socketTimeout: 30000,
       connectionTimeout: 30000,
@@ -92,7 +92,7 @@ function getPort465Transporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   RECIPIENT NORMALIZATION & ADVANCED SPINTAX
+   RECIPIENT NORMALIZATION & DYNAMIC SPINTAX
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -148,8 +148,7 @@ function parseSpintax(text) {
     spun = spun.replace(regex, (_, choices) => {
       if (!choices.includes('|')) return choices;
       const options = choices.split('|');
-      const pick = options[Math.floor(Math.random() * options.length)];
-      return pick ? pick.trim() : '';
+      return options[Math.floor(Math.random() * options.length)].trim();
     });
     iterations++;
   }
@@ -173,39 +172,52 @@ function personalizeContent(template, recipient) {
 }
 
 /* ==========================================================================
-   ANTI-KEYWORD NLP MASKING ENGINE
+   TARGET WORD SANITIZER (Bypasses keyword lists without visual distortion)
    ========================================================================== */
-function maskSpamKeywords(str) {
-  if (!str) return '';
-  const invisibleMask = '\u00AD'; // Zero-width soft hyphen
-  
-  return str.split(' ').map(word => {
-    // Links, variables, aur emails ko intact rakho
-    if (word.includes('@') || word.includes('http') || word.includes('{') || word.includes('<') || word.length <= 3) {
-      return word;
-    }
-    const mid = Math.floor(word.length / 2);
-    return word.slice(0, mid) + invisibleMask + word.slice(mid);
-  }).join(' ');
+function neutralizeSpamWords(text) {
+  if (!text) return '';
+
+  // Visually identical replacements (Cyrillic homoglyphs: а, е, о, р, с, у, і)
+  const dictionary = [
+    { target: /ranking/gi, repl: 'rаnking' },
+    { target: /rank/gi, repl: 'rаnk' },
+    { target: /page/gi, repl: 'pаgе' },
+    { target: /information/gi, repl: 'infоrmаtiоn' },
+    { target: /quote/gi, repl: 'quоtе' },
+    { target: /report/gi, repl: 'rеpоrt' },
+    { target: /hello/gi, repl: 'Hеllо' },
+    { target: /help/gi, repl: 'hеlp' },
+    { target: /details/gi, repl: 'dеtаils' },
+    { target: /derails/gi, repl: 'dеrаils' },
+    { target: /website/gi, repl: 'wеbsitе' },
+    { target: /audit/gi, repl: 'аudit' },
+    { target: /score/gi, repl: 'scоrе' }
+  ];
+
+  let neutralized = text;
+  for (const item of dictionary) {
+    neutralized = neutralized.replace(item.target, item.repl);
+  }
+  return neutralized;
 }
 
 function buildCleanDeliveryPayload(bodyText) {
   const rawClean = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const maskedText = maskSpamKeywords(rawClean);
+  const safeText = neutralizeSpamWords(rawClean);
   const isHtml = /<[a-z][\s\S]*>/i.test(rawClean);
 
-  // Micro-entropy trailing space to break bulk hash match
+  // Micro-entropy trailing space breaks bulk hash similarity
   const entropyTail = ' '.repeat(Math.floor(Math.random() * 4) + 1);
 
   if (isHtml) {
     return {
-      text: maskedText.replace(/<[^>]+>/g, '').trim() + entropyTail,
-      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${maskedText}</div>`
+      text: safeText.replace(/<[^>]+>/g, '').trim() + entropyTail,
+      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${safeText}</div>`
     };
   }
 
   return {
-    text: maskedText + entropyTail
+    text: safeText + entropyTail
   };
 }
 
@@ -245,7 +257,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 8 Emails Per Batch)
+   STREAMING DISPATCH ROUTE (Exact 3 Blitches for 24 Emails: 8 Per Batch)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -278,7 +290,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 8;
+  const BATCH_SIZE = 8; // 24 emails = Exactly 3 blitches
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -295,19 +307,22 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
+      // Micro-stagger (75ms) prevents socket collision across the 8 connections
       if (idx > 0) {
         await new Promise(r => setTimeout(r, idx * 75));
       }
 
       try {
-        const personalizedSubject = personalizeContent(subject, recipient);
+        const rawPersonalizedSubject = personalizeContent(subject, recipient);
+        const safeSubject = neutralizeSpamWords(rawPersonalizedSubject);
+
         const personalizedBody = personalizeContent(messageBody, recipient);
         const mailPayload = buildCleanDeliveryPayload(personalizedBody);
 
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: personalizedSubject || 'Update',
+          subject: safeSubject || 'Update',
           ...mailPayload
         };
 
@@ -333,8 +348,9 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
+    // Cooling pause between 8-email blitches (2.6s - 3.4s) to bypass Google burst-rate limit
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(2500 + Math.random() * 1000);
+      const cooldown = Math.floor(2600 + Math.random() * 800);
       await new Promise(resolve => setTimeout(resolve, cooldown));
     }
   }
