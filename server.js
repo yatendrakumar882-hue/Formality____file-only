@@ -17,12 +17,13 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const SITE_PASSWORD = process.env.SITE_PASSWORD || '##';
+const SITE_PASSWORD = process.env.SITE_PASSWORD || 'Y##';
 const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
 
 const globalSession = { stopRequested: false };
 const poolMap = new Map();
 
+// Express Configuration
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -60,24 +61,24 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   DIRECT SSL TRANSPORTER (Port 465)
+   PORT 465 SSL TRANSPORTER (2 Dedicated Sockets)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox_direct_${cleanEmail}_${cleanPass}`;
+  const key = `pure_inbox_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true,
+      secure: true, // Direct native SSL handshake
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 2, // 2 concurrent connections
+      maxConnections: 2, // 2 parallel connections
       maxMessages: 1000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
@@ -92,7 +93,7 @@ function getPort465Transporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   RECIPIENT PARSER & SPINTAX
+   RECIPIENT NORMALIZATION & ADVANCED SPINTAX
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -171,37 +172,21 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-/* ==========================================================================
-   DYNAMIC CONTENT HEURISTIC SHIELD
-   - Template ke blacklisted phrases ko dynamic equivalent me convert karta hai
-   - Google AI scanner is exact phrase ko match nahi kar pata
-   ========================================================================== */
-function transformSpamPatterns(text) {
-  if (!text) return '';
+// Exact Verbatim Delivery (Zero word changes, zero added noise)
+function buildVerbatimPayload(bodyText) {
+  const cleanBody = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const isHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
 
-  let sanitized = text
-    .replace(/1st pages ranking/gi, 'search results')
-    .replace(/1st pages/gi, 'top positions')
-    .replace(/first page/gi, 'main results')
-    .replace(/error quote/gi, 'audit details')
-    .replace(/the quote/gi, 'the summary')
-    .replace(/ranking/gi, 'presence')
-    .replace(/^["'\s]+|["'\s]+$/g, '');
+  if (isHtml) {
+    return {
+      text: cleanBody.replace(/<[^>]+>/g, '').trim(),
+      html: cleanBody
+    };
+  }
 
-  return sanitized;
-}
-
-function buildSafeInboxPayload(bodyText) {
-  const transformed = transformSpamPatterns(bodyText);
-  const cleanBody = transformed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-
-  // Natural spacing entropy taaki 2 mails ka hash kbhi match na ho
-  const entropy = ' '.repeat(Math.floor(Math.random() * 5) + 1);
-  const plainText = cleanBody + entropy;
-
+  // Pure Plain Text schema without alteration
   return {
-    text: plainText,
-    html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${cleanBody.replace(/\n/g, '<br>')}</div>`
+    text: cleanBody
   };
 }
 
@@ -241,7 +226,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (1 Blitch = 2 Emails)
+   STREAMING DISPATCH ROUTE (1 Blitch = 2 Emails, Exact Verbatim Text)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -291,25 +276,21 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (150ms)
+      // Micro-stagger (100ms) between the 2 sockets
       if (idx > 0) {
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 100));
       }
 
       try {
-        let rawSubject = personalizeContent(subject, recipient).trim();
-        // Agar single word subject hai to use safe banata hai
-        if (rawSubject.toLowerCase() === 'hello' || rawSubject.split(' ').length === 1) {
-          rawSubject = `${rawSubject} ${recipient.name || recipient.firstName}`;
-        }
-
+        const personalizedSubject = personalizeContent(subject, recipient).trim();
         const personalizedBody = personalizeContent(messageBody, recipient);
-        const mailPayload = buildSafeInboxPayload(personalizedBody);
+        const mailPayload = buildVerbatimPayload(personalizedBody);
 
+        // Native Google Webmail Envelope (Google creates authentic DKIM & Message-ID)
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: rawSubject || 'Quick note',
+          subject: personalizedSubject || 'Update',
           ...mailPayload
         };
 
@@ -335,7 +316,7 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 2-email blitches (3.0s - 4.0s)
+    // Cooling pause between 2-email blitches (3.0s - 4.0s) for safe reputation
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
       const cooldown = Math.floor(3000 + Math.random() * 1000);
       await new Promise(resolve => setTimeout(resolve, cooldown));
