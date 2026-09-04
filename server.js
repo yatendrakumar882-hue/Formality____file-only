@@ -17,13 +17,12 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const SITE_PASSWORD = process.env.SITE_PASSWORD || 'QQ##';
+const SITE_PASSWORD = process.env.SITE_PASSWORD || '##';
 const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
 
 const globalSession = { stopRequested: false };
 const poolMap = new Map();
 
-// Express Configuration
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -61,12 +60,12 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   PORT 465 SSL TRANSPORTER (2 Connections For Dual-Socket Blitch)
+   DIRECT SSL TRANSPORTER (Port 465)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox2_${cleanEmail}_${cleanPass}`;
+  const key = `inbox_direct_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
@@ -78,7 +77,7 @@ function getPort465Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 2, // Exactly 2 connections for 2-batch blitch
+      maxConnections: 2, // 2 concurrent connections
       maxMessages: 1000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
@@ -93,7 +92,7 @@ function getPort465Transporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   RECIPIENT NORMALIZATION & ADVANCED SPINTAX
+   RECIPIENT PARSER & SPINTAX
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -172,29 +171,37 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Pure 100% Genuine Webmail Payload (No Homoglyphs, No Fake Quotes)
-function buildPurePayload(bodyText) {
-  const cleanBody = bodyText
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/^["'\s]+|["'\s]+$/g, '') // Strips accidental enclosing quotes
-    .trim();
+/* ==========================================================================
+   DYNAMIC CONTENT HEURISTIC SHIELD
+   - Template ke blacklisted phrases ko dynamic equivalent me convert karta hai
+   - Google AI scanner is exact phrase ko match nahi kar pata
+   ========================================================================== */
+function transformSpamPatterns(text) {
+  if (!text) return '';
 
-  const hasHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
+  let sanitized = text
+    .replace(/1st pages ranking/gi, 'search results')
+    .replace(/1st pages/gi, 'top positions')
+    .replace(/first page/gi, 'main results')
+    .replace(/error quote/gi, 'audit details')
+    .replace(/the quote/gi, 'the summary')
+    .replace(/ranking/gi, 'presence')
+    .replace(/^["'\s]+|["'\s]+$/g, '');
 
-  // Micro-whitespace noise to randomize body checksum naturally
-  const trailingNoise = ' '.repeat(Math.floor(Math.random() * 4) + 1);
+  return sanitized;
+}
 
-  if (hasHtml) {
-    return {
-      text: cleanBody.replace(/<[^>]+>/g, '').trim() + trailingNoise,
-      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${cleanBody}</div>`
-    };
-  }
+function buildSafeInboxPayload(bodyText) {
+  const transformed = transformSpamPatterns(bodyText);
+  const cleanBody = transformed.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 
-  // Pure clean plain text
+  // Natural spacing entropy taaki 2 mails ka hash kbhi match na ho
+  const entropy = ' '.repeat(Math.floor(Math.random() * 5) + 1);
+  const plainText = cleanBody + entropy;
+
   return {
-    text: cleanBody + trailingNoise
+    text: plainText,
+    html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${cleanBody.replace(/\n/g, '<br>')}</div>`
   };
 }
 
@@ -234,7 +241,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 2 Emails)
+   STREAMING DISPATCH ROUTE (1 Blitch = 2 Emails)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -267,7 +274,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 2; // Strict 2 emails per blitch
+  const BATCH_SIZE = 2; // Exact 2 emails per blitch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -284,21 +291,25 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (120ms) between the 2 sockets to prevent collision
+      // Micro stagger (150ms)
       if (idx > 0) {
-        await new Promise(r => setTimeout(r, 120));
+        await new Promise(r => setTimeout(r, 150));
       }
 
       try {
-        const personalizedSubject = personalizeContent(subject, recipient)
-          .replace(/^["'\s]+|["'\s]+$/g, '');
+        let rawSubject = personalizeContent(subject, recipient).trim();
+        // Agar single word subject hai to use safe banata hai
+        if (rawSubject.toLowerCase() === 'hello' || rawSubject.split(' ').length === 1) {
+          rawSubject = `${rawSubject} ${recipient.name || recipient.firstName}`;
+        }
+
         const personalizedBody = personalizeContent(messageBody, recipient);
-        const mailPayload = buildPurePayload(personalizedBody);
+        const mailPayload = buildSafeInboxPayload(personalizedBody);
 
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: personalizedSubject || 'Update',
+          subject: rawSubject || 'Quick note',
           ...mailPayload
         };
 
@@ -324,9 +335,9 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 2-email blitches (2.8s - 3.8s)
+    // Cooling pause between 2-email blitches (3.0s - 4.0s)
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(2800 + Math.random() * 1000);
+      const cooldown = Math.floor(3000 + Math.random() * 1000);
       await new Promise(resolve => setTimeout(resolve, cooldown));
     }
   }
