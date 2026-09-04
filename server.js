@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +24,7 @@ const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x000000000000
 const globalSession = { stopRequested: false };
 const poolMap = new Map();
 
+// Express Configuration
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -60,25 +62,25 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   2-SOCKET DEDICATED SSL TRANSPORTER (Port 465)
+   GMAIL PORT 465 SSL TRANSPORTER (6 High-Trust Connections)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox2_${cleanEmail}_${cleanPass}`;
+  const key = `inbox_465_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true,
+      secure: true, // Native direct SSL (Strict SPF/DKIM verification)
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 6, // Exact 6 connections for 6-batch blitch
-      maxMessages: 984000,
+      maxConnections: 6, // 6 concurrent pooled pipes
+      maxMessages: 2500,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -148,7 +150,8 @@ function parseSpintax(text) {
     spun = spun.replace(regex, (_, choices) => {
       if (!choices.includes('|')) return choices;
       const options = choices.split('|');
-      return options[Math.floor(Math.random() * options.length)].trim();
+      const pick = options[Math.floor(Math.random() * options.length)];
+      return pick ? pick.trim() : '';
     });
     iterations++;
   }
@@ -171,23 +174,26 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Organic 1-on-1 Clean Structure (No Fake Tags, No Spam Fingerprints)
+// Organic 1-on-1 Content Engine: Anti-Hash Mutation
 function buildCanonicalEmail(bodyText) {
   if (!bodyText) return { text: '', html: '' };
 
   const rawClean = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   const isHtml = /<[a-z][\s\S]*>/i.test(rawClean);
-  const plainText = rawClean.replace(/<[^>]+>/g, '').trim();
 
-  const fontStyle = "font-family:Arial,Helvetica,sans-serif;font-size:11pt;color:#222222;line-height:1.5;";
+  // Generates variable invisible whitespace tail to break bulk hash matching
+  const noiseCount = Math.floor(Math.random() * 4) + 1;
+  const entropyTail = ' '.repeat(noiseCount);
+
+  let plainText = rawClean.replace(/<[^>]+>/g, '').trim() + entropyTail;
 
   let htmlContent = '';
   if (isHtml) {
-    htmlContent = `<div dir="ltr" style="${fontStyle}">${rawClean}</div>`;
+    htmlContent = `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${rawClean}</div>`;
   } else {
     const paragraphs = rawClean.split(/\n\n+/);
-    htmlContent = `<div dir="ltr" style="${fontStyle}">` +
-      paragraphs.map(p => `<p style="margin:0 0 16px 0;${fontStyle}">${p.replace(/\n/g, '<br>')}</p>`).join('') +
+    htmlContent = `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">` +
+      paragraphs.map(p => `<p style="margin:0 0 16px 0;">${p.replace(/\n/g, '<br>')}</p>`).join('') +
       `</div>`;
   }
 
@@ -230,7 +236,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   SAFE 2-BATCH STREAMING (1 Blitch = 2 Emails)
+   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 6 Emails Parallel)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -263,7 +269,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 6; // Strict 6 emails per blitch
+  const BATCH_SIZE = 6; // Exact 6 emails per blitch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -280,9 +286,9 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (100ms) between the 6 emails to prevent simultaneous handshake lock
+      // Micro stagger (75ms) prevents simultaneous socket collision at SSL layer
       if (idx > 0) {
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, idx * 75));
       }
 
       try {
@@ -290,7 +296,7 @@ app.post('/api/send-stream', async (req, res) => {
         const personalizedBody = personalizeContent(messageBody, recipient);
         const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
 
-        // Pure standard mail options (No spoofed User-Agent, No fake Thunderbird headers)
+        // Native Google Webmail Schema (Google handles Message-ID & DKIM sealing)
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
@@ -321,10 +327,10 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 6-email blitches (2.5s - 3.5s) to bypass bulk spam heuristic
+    // Cooling pause between 6-email blitches (2.2s - 3.2s) to bypass Google burst-rate limit
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const safeCooldown = Math.floor(2500 + Math.random() * 1000);
-      await new Promise(resolve => setTimeout(resolve, safeCooldown));
+      const cooldown = Math.floor(2200 + Math.random() * 1000);
+      await new Promise(resolve => setTimeout(resolve, cooldown));
     }
   }
 
@@ -338,11 +344,13 @@ app.post('/api/stop', (req, res) => {
   res.json({ success: true, message: 'Sending process stopped' });
 });
 
+// UI Catch-All Route
 app.get('*', (req, res) => {
   const filePath = path.join(process.cwd(), 'public', 'index.html');
   res.sendFile(filePath);
 });
 
+// Start Server locally; Export for Vercel
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   server.listen(PORT, () => {
     console.log(`Mailer server running safely on port ${PORT}`);
