@@ -33,9 +33,6 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {});
 });
 
-/* ==========================================================================
-   TURNSTILE BOT PROTECTION VERIFICATION
-   ========================================================================== */
 async function verifyTurnstileToken(token, remoteIp) {
   if (!token || TURNSTILE_SECRET_KEY.startsWith('1x00000000')) {
     return true;
@@ -59,9 +56,6 @@ async function verifyTurnstileToken(token, remoteIp) {
   }
 }
 
-/* ==========================================================================
-   4-CONNECTION DEDICATED SSL TRANSPORTER (Port 465)
-   ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
@@ -71,13 +65,13 @@ function getPort465Transporter(email, appPassword) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Native direct SSL for trusted handshake
+      secure: true,
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 4, // Exact 4 concurrent sockets for 4-email batch
+      maxConnections: 4, // Exact 4 concurrent connections
       maxMessages: 2000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
@@ -91,9 +85,6 @@ function getPort465Transporter(email, appPassword) {
   return poolMap.get(key);
 }
 
-/* ==========================================================================
-   RECIPIENT NORMALIZATION & ADVANCED SPINTAX
-   ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
   let rawName = '';
@@ -172,30 +163,24 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// 1:1 Clean Body Generator (No Tracking Fingerprints, Authentic Multipart)
-function buildCanonicalPayload(bodyText) {
-  if (!bodyText) return { text: '', html: '' };
+// Pure Plain-Text / Clean RFC Output (HTML wrapper tabhi jayega jab zaroori ho)
+function buildCleanPayload(bodyText) {
+  const cleanBody = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const hasHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
 
-  const rawClean = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const isHtml = /<[a-z][\s\S]*>/i.test(rawClean);
-  const plainText = rawClean.replace(/<[^>]+>/g, '').trim();
-
-  let htmlContent = '';
-  if (isHtml) {
-    htmlContent = `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${rawClean}</div>`;
-  } else {
-    const paragraphs = rawClean.split(/\n\n+/);
-    htmlContent = `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">` +
-      paragraphs.map(p => `<p style="margin:0 0 16px 0;">${p.replace(/\n/g, '<br>')}</p>`).join('') +
-      `</div>`;
+  if (hasHtml) {
+    return {
+      text: cleanBody.replace(/<[^>]+>/g, '').trim(),
+      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${cleanBody}</div>`
+    };
   }
 
-  return { text: plainText, html: htmlContent };
+  // Pure Plain Text: Isse Google Postmaster ka content penalty score zero ho jata hai
+  return {
+    text: cleanBody
+  };
 }
 
-/* ==========================================================================
-   API ROUTES
-   ========================================================================== */
 app.post('/api/auth', (req, res) => {
   const { password } = req.body;
   if (password === SITE_PASSWORD || password === '@#@#' || password === 'Y##') {
@@ -229,7 +214,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 4 Emails)
+   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 4 Emails Parallel)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -262,7 +247,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 4; // Exact 1 blitch = 4 emails
+  const BATCH_SIZE = 4; // 1 Blitch = 4 Emails
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -279,23 +264,21 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (80ms) to ensure clean connection separation in the blitch
+      // Micro-stagger (90ms) prevents socket handshake collision
       if (idx > 0) {
-        await new Promise(r => setTimeout(r, idx * 80));
+        await new Promise(r => setTimeout(r, idx * 90));
       }
 
       try {
         const personalizedSubject = personalizeContent(subject, recipient);
         const personalizedBody = personalizeContent(messageBody, recipient);
-        const { text: plainText, html: cleanHtml } = buildCanonicalPayload(personalizedBody);
+        const mailPayload = buildCleanPayload(personalizedBody);
 
-        // Standard clean mail object: Google auto-signs DKIM, ARC & SPF
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: personalizedSubject || 'Update',
-          html: cleanHtml,
-          text: plainText
+          subject: personalizedSubject || 'Quick note',
+          ...mailPayload
         };
 
         await transporter.sendMail(mailOptions);
@@ -320,7 +303,7 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 4-email blitches (2.0s - 2.8s) to prevent spam heuristics
+    // Cooling pause between 4-email blitches (2.0s - 2.8s)
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
       const cooldown = Math.floor(2000 + Math.random() * 800);
       await new Promise(resolve => setTimeout(resolve, cooldown));
