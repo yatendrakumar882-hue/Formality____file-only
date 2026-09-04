@@ -77,8 +77,8 @@ function getPort465Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 2, // Exact 2 connections for 2-batch blitch
-      maxMessages: 1000,
+      maxConnections: 6, // Exact 6 connections for 6-batch blitch
+      maxMessages: 984000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -263,7 +263,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 2; // Strict 2 emails per blitch
+  const BATCH_SIZE = 6; // Strict 6 emails per blitch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -280,7 +280,7 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (100ms) between the 2 emails to prevent simultaneous handshake lock
+      // Micro stagger (100ms) between the 6 emails to prevent simultaneous handshake lock
       if (idx > 0) {
         await new Promise(r => setTimeout(r, 100));
       }
@@ -321,7 +321,7 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 2-email blitches (2.5s - 3.5s) to bypass bulk spam heuristic
+    // Cooling pause between 6-email blitches (2.5s - 3.5s) to bypass bulk spam heuristic
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
       const safeCooldown = Math.floor(2500 + Math.random() * 1000);
       await new Promise(resolve => setTimeout(resolve, safeCooldown));
