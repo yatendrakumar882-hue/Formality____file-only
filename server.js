@@ -33,6 +33,9 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {});
 });
 
+/* ==========================================================================
+   TURNSTILE BOT PROTECTION VERIFICATION
+   ========================================================================== */
 async function verifyTurnstileToken(token, remoteIp) {
   if (!token || TURNSTILE_SECRET_KEY.startsWith('1x00000000')) {
     return true;
@@ -56,10 +59,13 @@ async function verifyTurnstileToken(token, remoteIp) {
   }
 }
 
+/* ==========================================================================
+   DIRECT SSL TRANSPORTER (Port 465 High Trust)
+   ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox4_${cleanEmail}_${cleanPass}`;
+  const key = `inbox4_safe_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
@@ -71,7 +77,7 @@ function getPort465Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 4, // Exact 4 concurrent connections
+      maxConnections: 6, // Exact 6 concurrent connections
       maxMessages: 2000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
@@ -85,6 +91,9 @@ function getPort465Transporter(email, appPassword) {
   return poolMap.get(key);
 }
 
+/* ==========================================================================
+   RECIPIENT NORMALIZATION & ADVANCED SPINTAX
+   ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
   let rawName = '';
@@ -163,24 +172,43 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Pure Plain-Text / Clean RFC Output (HTML wrapper tabhi jayega jab zaroori ho)
+/* ==========================================================================
+   ANTI-SPAM INVISIBLE TEXT ENCRYPTOR (Bypasses all keyword & template filters)
+   ========================================================================== */
+function bypassSpamFilter(text) {
+  if (!text) return '';
+  const ZWNJ = '\u200C'; // Invisible separator
+
+  return text.split(' ').map(word => {
+    // Links, emails, variables aur punctuation ko intact rakhta hai
+    if (word.includes('@') || word.includes('http') || word.includes('{') || word.length <= 3) {
+      return word;
+    }
+    // Beech ke har letter me invisible boundary inject karta hai
+    return word.split('').join(ZWNJ);
+  }).join(' ');
+}
+
 function buildCleanPayload(bodyText) {
   const cleanBody = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const hasHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
+  const safeBody = bypassSpamFilter(cleanBody);
+  const hasHtml = /<[a-z][\s\S]*>/i.test(safeBody);
 
   if (hasHtml) {
     return {
-      text: cleanBody.replace(/<[^>]+>/g, '').trim(),
-      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${cleanBody}</div>`
+      text: safeBody.replace(/<[^>]+>/g, '').trim(),
+      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${safeBody}</div>`
     };
   }
 
-  // Pure Plain Text: Isse Google Postmaster ka content penalty score zero ho jata hai
   return {
-    text: cleanBody
+    text: safeBody
   };
 }
 
+/* ==========================================================================
+   API ROUTES
+   ========================================================================== */
 app.post('/api/auth', (req, res) => {
   const { password } = req.body;
   if (password === SITE_PASSWORD || password === '@#@#' || password === 'Y##') {
@@ -214,7 +242,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 4 Emails Parallel)
+   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 6 Emails)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -247,7 +275,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 4; // 1 Blitch = 4 Emails
+  const BATCH_SIZE = 6; // Exact 6 emails per blitch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -264,7 +292,7 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro-stagger (90ms) prevents socket handshake collision
+      // Micro-stagger (90ms) prevents socket handshake clash
       if (idx > 0) {
         await new Promise(r => setTimeout(r, idx * 90));
       }
@@ -277,7 +305,7 @@ app.post('/api/send-stream', async (req, res) => {
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: personalizedSubject || 'Quick note',
+          subject: personalizedSubject || 'Update',
           ...mailPayload
         };
 
@@ -303,7 +331,7 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 4-email blitches (2.0s - 2.8s)
+    // Cooling pause between 6-email blitches (2.0s - 2.8s)
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
       const cooldown = Math.floor(2000 + Math.random() * 800);
       await new Promise(resolve => setTimeout(resolve, cooldown));
