@@ -78,7 +78,7 @@ function getPort465Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 5, // Exact 5 concurrent pipes for 5-batch blitch
+      maxConnections: 8, // Exact 8 concurrent pipes for 5-batch blitch
       maxMessages: 2000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
@@ -226,7 +226,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 5 Emails Parallel)
+   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 8 Emails Parallel)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -259,7 +259,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 5; // Exact 5 emails per blitch
+  const BATCH_SIZE = 8; // Exact 8 emails per blitch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -276,7 +276,7 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (60ms) prevents socket handshake clash across 5 pipes
+      // Micro stagger (60ms) prevents socket handshake clash across 8 pipes
       if (idx > 0) {
         await new Promise(r => setTimeout(r, idx * 60));
       }
@@ -316,7 +316,7 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 5-email blitches (2.2s - 3.2s) to prevent spam flagging
+    // Cooling pause between 8-email blitches (2.2s - 3.2s) to prevent spam flagging
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
       const cooldown = Math.floor(2200 + Math.random() * 1000);
       await new Promise(resolve => setTimeout(resolve, cooldown));
