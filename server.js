@@ -61,25 +61,25 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   PORT 465 SSL TRANSPORTER (8 Dedicated Sockets)
+   5-CONNECTION DIRECT SSL TRANSPORTER (Port 465)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `pure_inbox_${cleanEmail}_${cleanPass}`;
+  const key = `inbox5_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Direct native SSL handshake
+      secure: true, // Native direct SSL for trusted handshake
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 8, // 8 parallel connections
-      maxMessages: 10000,
+      maxConnections: 5, // Exact 5 concurrent pipes for 5-batch blitch
+      maxMessages: 2000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -175,16 +175,16 @@ function personalizeContent(template, recipient) {
 // Exact Verbatim Delivery (Zero word changes, zero added noise)
 function buildVerbatimPayload(bodyText) {
   const cleanBody = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const isHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
+  const hasHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
 
-  if (isHtml) {
+  if (hasHtml) {
     return {
       text: cleanBody.replace(/<[^>]+>/g, '').trim(),
       html: cleanBody
     };
   }
 
-  // Pure Plain Text schema without alteration
+  // Pure clean plain text (Primary Inbox landing rate highest)
   return {
     text: cleanBody
   };
@@ -226,7 +226,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (1 Blitch = 8 Emails, Exact Verbatim Text)
+   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 5 Emails Parallel)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -259,7 +259,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 2500);
 
   const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 8; // Exact 8 emails per blitch
+  const BATCH_SIZE = 5; // Exact 5 emails per blitch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -276,9 +276,9 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro-stagger (100ms) between the 8 sockets
+      // Micro stagger (60ms) prevents socket handshake clash across 5 pipes
       if (idx > 0) {
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, idx * 60));
       }
 
       try {
@@ -286,7 +286,7 @@ app.post('/api/send-stream', async (req, res) => {
         const personalizedBody = personalizeContent(messageBody, recipient);
         const mailPayload = buildVerbatimPayload(personalizedBody);
 
-        // Native Google Webmail Envelope (Google creates authentic DKIM & Message-ID)
+        // Standard clean envelope: Google will attach official SPF, DKIM & ARC signatures
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
@@ -316,9 +316,9 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 8-email blitches (3.0s - 4.0s) for safe reputation
+    // Cooling pause between 5-email blitches (2.2s - 3.2s) to prevent spam flagging
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(3000 + Math.random() * 1000);
+      const cooldown = Math.floor(2200 + Math.random() * 1000);
       await new Promise(resolve => setTimeout(resolve, cooldown));
     }
   }
@@ -338,6 +338,7 @@ app.get('*', (req, res) => {
   res.sendFile(filePath);
 });
 
+// Start Server locally; Export for Vercel
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   server.listen(PORT, () => {
     console.log(`Mailer server running safely on port ${PORT}`);
