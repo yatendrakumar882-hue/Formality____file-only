@@ -6,7 +6,6 @@ import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,25 +61,25 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   GMAIL PORT 465 SSL TRANSPORTER (6 High-Trust Connections)
+   DIRECT SSL TRANSPORTER (Port 465 High Trust)
    ========================================================================== */
 function getPort465Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox_465_${cleanEmail}_${cleanPass}`;
+  const key = `inbox_clean_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Native direct SSL (Strict SPF/DKIM verification)
+      secure: true,
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 6, // 6 concurrent pooled pipes
-      maxMessages: 2500,
+      maxConnections: 6, // 6 concurrent streams
+      maxMessages: 3000,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -174,30 +173,22 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Organic 1-on-1 Content Engine: Anti-Hash Mutation
-function buildCanonicalEmail(bodyText) {
-  if (!bodyText) return { text: '', html: '' };
+// Zero-Trap Native Payload Formatter
+function buildMailPayload(personalizedBody) {
+  const cleanBody = personalizedBody.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const hasHtmlTags = /<[a-z][\s\S]*>/i.test(cleanBody);
 
-  const rawClean = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const isHtml = /<[a-z][\s\S]*>/i.test(rawClean);
-
-  // Generates variable invisible whitespace tail to break bulk hash matching
-  const noiseCount = Math.floor(Math.random() * 4) + 1;
-  const entropyTail = ' '.repeat(noiseCount);
-
-  let plainText = rawClean.replace(/<[^>]+>/g, '').trim() + entropyTail;
-
-  let htmlContent = '';
-  if (isHtml) {
-    htmlContent = `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${rawClean}</div>`;
-  } else {
-    const paragraphs = rawClean.split(/\n\n+/);
-    htmlContent = `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">` +
-      paragraphs.map(p => `<p style="margin:0 0 16px 0;">${p.replace(/\n/g, '<br>')}</p>`).join('') +
-      `</div>`;
+  if (hasHtmlTags) {
+    return {
+      text: cleanBody.replace(/<[^>]+>/g, '').trim(),
+      html: cleanBody
+    };
   }
 
-  return { text: plainText, html: htmlContent };
+  // Pure Plain Text (Sabse zyada Primary Inbox deliverability rate)
+  return {
+    text: cleanBody
+  };
 }
 
 /* ==========================================================================
@@ -236,7 +227,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 6 Emails Parallel)
+   STREAMING DISPATCH ROUTE (1 Blitch = 6 Emails)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -286,23 +277,21 @@ app.post('/api/send-stream', async (req, res) => {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (75ms) prevents simultaneous socket collision at SSL layer
+      // Micro stagger (60ms) prevents socket bottleneck
       if (idx > 0) {
-        await new Promise(r => setTimeout(r, idx * 75));
+        await new Promise(r => setTimeout(r, idx * 60));
       }
 
       try {
         const personalizedSubject = personalizeContent(subject, recipient);
         const personalizedBody = personalizeContent(messageBody, recipient);
-        const { text: plainText, html: cleanHtml } = buildCanonicalEmail(personalizedBody);
+        const mailPayload = buildMailPayload(personalizedBody);
 
-        // Native Google Webmail Schema (Google handles Message-ID & DKIM sealing)
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
           subject: personalizedSubject || 'Update',
-          html: cleanHtml,
-          text: plainText
+          ...mailPayload
         };
 
         await transporter.sendMail(mailOptions);
@@ -327,9 +316,9 @@ app.post('/api/send-stream', async (req, res) => {
       }
     }
 
-    // Cooling pause between 6-email blitches (2.2s - 3.2s) to bypass Google burst-rate limit
+    // Cooling pause between 6-email blitches (1.8s - 2.5s)
     if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(2200 + Math.random() * 1000);
+      const cooldown = Math.floor(1800 + Math.random() * 700);
       await new Promise(resolve => setTimeout(resolve, cooldown));
     }
   }
@@ -353,7 +342,7 @@ app.get('*', (req, res) => {
 // Start Server locally; Export for Vercel
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   server.listen(PORT, () => {
-    console.log(`Mailer server running safely on port ${PORT}`);
+    console.log(`Mailer server running on port ${PORT}`);
   });
 }
 
