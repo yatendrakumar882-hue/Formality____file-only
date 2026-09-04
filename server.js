@@ -23,7 +23,6 @@ const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x000000000000
 const globalSession = { stopRequested: false };
 const poolMap = new Map();
 
-// Express Configuration
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -61,12 +60,12 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   DIRECT SSL TRANSPORTER (Port 465 High Trust)
+   NATIVE HIGH-TRUST SSL TRANSPORTER (Port 465)
    ========================================================================== */
-function getPort465Transporter(email, appPassword) {
+function getInboxTransporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox_clean_${cleanEmail}_${cleanPass}`;
+  const key = `inbox_ssl_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
@@ -78,8 +77,8 @@ function getPort465Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 6, // 6 concurrent streams
-      maxMessages: 3000,
+      maxConnections: 1, // Single continuous channel keeps Google trust intact
+      maxMessages: 500,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -93,7 +92,7 @@ function getPort465Transporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   RECIPIENT NORMALIZATION & ADVANCED SPINTAX
+   RECIPIENT PARSER & DYNAMIC SPINTAX RESOLVER
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -149,8 +148,7 @@ function parseSpintax(text) {
     spun = spun.replace(regex, (_, choices) => {
       if (!choices.includes('|')) return choices;
       const options = choices.split('|');
-      const pick = options[Math.floor(Math.random() * options.length)];
-      return pick ? pick.trim() : '';
+      return options[Math.floor(Math.random() * options.length)].trim();
     });
     iterations++;
   }
@@ -173,19 +171,19 @@ function personalizeContent(template, recipient) {
   return content;
 }
 
-// Zero-Trap Native Payload Formatter
-function buildMailPayload(personalizedBody) {
+// Pure 1-on-1 Clean Webmail Body (Bypasses MIME Heuristic Flags)
+function buildCleanPayload(personalizedBody) {
   const cleanBody = personalizedBody.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const hasHtmlTags = /<[a-z][\s\S]*>/i.test(cleanBody);
+  const hasHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
 
-  if (hasHtmlTags) {
+  if (hasHtml) {
     return {
       text: cleanBody.replace(/<[^>]+>/g, '').trim(),
-      html: cleanBody
+      html: `<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:small;color:#222222;line-height:1.5;">${cleanBody}</div>`
     };
   }
 
-  // Pure Plain Text (Sabse zyada Primary Inbox deliverability rate)
+  // Pure Plain Text: Highest Primary Inbox placement score
   return {
     text: cleanBody
   };
@@ -215,7 +213,7 @@ app.post('/api/verify', async (req, res) => {
   }
 
   try {
-    const transporter = getPort465Transporter(email, appPassword);
+    const transporter = getInboxTransporter(email, appPassword);
     await transporter.verify();
     return res.json({ success: true, message: 'SMTP verified successfully' });
   } catch (error) {
@@ -227,7 +225,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (1 Blitch = 6 Emails)
+   INBOX-OPTIMIZED DISPATCH PIPELINE
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -259,67 +257,51 @@ app.post('/api/send-stream', async (req, res) => {
     try { res.write(': keep-alive\n\n'); } catch {}
   }, 2500);
 
-  const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 6; // Exact 6 emails per blitch
+  const transporter = getInboxTransporter(email, appPassword);
 
-  for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+  for (let i = 0; i < recipients.length; i++) {
     if (globalSession.stopRequested) {
       res.write(`data: ${JSON.stringify({ success: false, error: 'Stopped by User' })}\n\n`);
       break;
     }
 
-    const batch = recipients.slice(i, i + BATCH_SIZE);
+    const rawRecipient = recipients[i];
+    const recipient = parseRecipientData(rawRecipient);
 
-    const sendPromises = batch.map(async (rawRecipient, idx) => {
-      const recipient = parseRecipientData(rawRecipient);
-
-      if (!recipient.email) {
-        return { success: false, recipient: '', error: 'Invalid Email' };
-      }
-
-      // Micro stagger (60ms) prevents socket bottleneck
-      if (idx > 0) {
-        await new Promise(r => setTimeout(r, idx * 60));
-      }
-
-      try {
-        const personalizedSubject = personalizeContent(subject, recipient);
-        const personalizedBody = personalizeContent(messageBody, recipient);
-        const mailPayload = buildMailPayload(personalizedBody);
-
-        const mailOptions = {
-          from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
-          to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: personalizedSubject || 'Update',
-          ...mailPayload
-        };
-
-        await transporter.sendMail(mailOptions);
-        return { success: true, recipient: recipient.email, name: recipient.name };
-
-      } catch (err) {
-        return { success: false, recipient: recipient.email, error: err.message };
-      }
-    });
-
-    const results = await Promise.allSettled(sendPromises);
-
-    for (const resItem of results) {
-      if (resItem.status === 'fulfilled') {
-        const payload = resItem.value;
-        if (payload.success) {
-          io.emit('mail_sent', payload);
-        } else {
-          io.emit('mail_error', payload);
-        }
-        res.write(`data: ${JSON.stringify(payload)}\n\n`);
-      }
+    if (!recipient.email) {
+      res.write(`data: ${JSON.stringify({ success: false, recipient: '', error: 'Invalid Email' })}\n\n`);
+      continue;
     }
 
-    // Cooling pause between 6-email blitches (1.8s - 2.5s)
-    if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(1800 + Math.random() * 700);
-      await new Promise(resolve => setTimeout(resolve, cooldown));
+    try {
+      const personalizedSubject = personalizeContent(subject, recipient);
+      const personalizedBody = personalizeContent(messageBody, recipient);
+      const mailPayload = buildCleanPayload(personalizedBody);
+
+      // Google Relay automatically applies RFC-compliant Message-ID, DKIM & ARC
+      const mailOptions = {
+        from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
+        to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
+        subject: personalizedSubject || 'Update',
+        ...mailPayload
+      };
+
+      await transporter.sendMail(mailOptions);
+
+      const payload = { success: true, recipient: recipient.email, name: recipient.name };
+      io.emit('mail_sent', payload);
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+
+    } catch (err) {
+      const errPayload = { success: false, recipient: recipient.email, error: err.message };
+      io.emit('mail_error', errPayload);
+      res.write(`data: ${JSON.stringify(errPayload)}\n\n`);
+    }
+
+    // Human interval (1.8s - 2.6s) to preserve account reputation and bypass burst filters
+    if (i < recipients.length - 1 && !globalSession.stopRequested) {
+      const naturalDelay = Math.floor(1800 + Math.random() * 800);
+      await new Promise(resolve => setTimeout(resolve, naturalDelay));
     }
   }
 
@@ -333,16 +315,14 @@ app.post('/api/stop', (req, res) => {
   res.json({ success: true, message: 'Sending process stopped' });
 });
 
-// UI Catch-All Route
 app.get('*', (req, res) => {
   const filePath = path.join(process.cwd(), 'public', 'index.html');
   res.sendFile(filePath);
 });
 
-// Start Server locally; Export for Vercel
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   server.listen(PORT, () => {
-    console.log(`Mailer server running on port ${PORT}`);
+    console.log(`Mailer server running safely on port ${PORT}`);
   });
 }
 
