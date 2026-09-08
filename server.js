@@ -1,21 +1,16 @@
 import 'dotenv/config';
 import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
 import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
+import crypto from 'crypto';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
-});
-
 const PORT = process.env.PORT || 3000;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || 'Y##';
 const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
@@ -23,22 +18,20 @@ const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x000000000000
 const globalSession = { stopRequested: false };
 const poolMap = new Map();
 
-// Express Configuration
+// Dynamic Helper Delays
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Express Setup
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(express.static(path.join(process.cwd(), 'public')));
 app.use(express.static(path.join(__dirname, 'public')));
-
-io.on('connection', (socket) => {
-  socket.on('disconnect', () => {});
-});
 
 /* ==========================================================================
    TURNSTILE BOT PROTECTION VERIFICATION
    ========================================================================== */
 async function verifyTurnstileToken(token, remoteIp) {
-  if (!token || TURNSTILE_SECRET_KEY.startsWith('1x00000000')) {
+  if (!token || TURNSTILE_SECRET_KEY.startsWith('1x0000000000000000000000000000000AA')) {
     return true;
   }
 
@@ -55,31 +48,36 @@ async function verifyTurnstileToken(token, remoteIp) {
     });
     const outcome = await result.json();
     return outcome.success === true;
-  } catch {
+  } catch (error) {
     return false;
   }
 }
 
 /* ==========================================================================
-   5-CONNECTION DIRECT SSL TRANSPORTER (Port 465)
+   GMAIL TLS TRANSPORTER POOL (Optimized TLS & Connections)
    ========================================================================== */
-function getPort465Transporter(email, appPassword) {
+function getPort587Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox5_${cleanEmail}_${cleanPass}`;
+  const key = `port587_${cleanEmail}_${cleanPass}`;
+
+  if (poolMap.size > 100) {
+    poolMap.clear();
+  }
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true, // Native direct SSL for trusted handshake
+      port: 587,
+      secure: false, // STARTTLS
+      requireTLS: true,
       auth: {
         user: cleanEmail,
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 8, // Exact 8 concurrent pipes for 5-batch blitch
-      maxMessages: 2000,
+      maxConnections: 6,
+      maxMessages: 100,
       socketTimeout: 30000,
       connectionTimeout: 30000,
       tls: {
@@ -93,7 +91,7 @@ function getPort465Transporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   RECIPIENT NORMALIZATION & ADVANCED SPINTAX
+   RECIPIENT & SPINTAX HELPERS WITH INVISIBLE SPAM-BYPASS HASH
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -131,11 +129,14 @@ function parseRecipientData(input) {
     ? rawName.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
     : '';
 
+  const firstName = formattedName ? formattedName.split(' ')[0] : '';
+  const domain = email.includes('@') ? email.split('@')[1] : '';
+
   return {
     email: email.toLowerCase(),
     name: formattedName,
-    firstName: formattedName ? formattedName.split(' ')[0] : 'there',
-    domain: email.includes('@') ? email.split('@')[1] : ''
+    firstName: firstName,
+    domain: domain
   };
 }
 
@@ -145,59 +146,75 @@ function parseSpintax(text) {
   const regex = /\{([^{}]+)\}/s;
   let iterations = 0;
 
-  while (regex.test(spun) && iterations < 35) {
+  while (regex.test(spun) && iterations < 30) {
     spun = spun.replace(regex, (_, choices) => {
       if (!choices.includes('|')) return choices;
       const options = choices.split('|');
-      return options[Math.floor(Math.random() * options.length)].trim();
+      const pick = options[Math.floor(Math.random() * options.length)];
+      return pick ? pick.trim() : '';
     });
     iterations++;
   }
   return spun.replace(/[\{\}]/g, '').trim();
 }
 
+// Zero-width space generator: Unseen by users, but changes body cryptographic fingerprint for Spam Bypassing
+function getInvisibleHash() {
+  const zeroWidthChars = ['\u200B', '\u200C', '\u200D', '\uFEFF'];
+  let hash = '';
+  for (let i = 0; i < 6; i++) {
+    hash += zeroWidthChars[Math.floor(Math.random() * zeroWidthChars.length)];
+  }
+  return hash;
+}
+
 function personalizeContent(template, recipient) {
   if (!template) return '';
   let content = parseSpintax(template);
 
-  const displayName = recipient.name || recipient.firstName || 'there';
-  const displayFirstName = recipient.firstName || displayName || 'there';
+  const displayName = recipient.name || recipient.firstName || '';
+  const displayFirstName = recipient.firstName || displayName || '';
 
-  content = content.replace(/{Name}/gi, displayName);
-  content = content.replace(/{FirstName}/gi, displayFirstName);
-  content = content.replace(/{First_Name}/gi, displayFirstName);
+  content = content.replace(/{Name}/gi, displayName ? displayName : 'there');
+  content = content.replace(/{FirstName}/gi, displayFirstName ? displayFirstName : 'there');
+  content = content.replace(/{First_Name}/gi, displayFirstName ? displayFirstName : 'there');
   content = content.replace(/{Email}/gi, recipient.email);
   content = content.replace(/{Domain}/gi, recipient.domain);
 
   return content;
 }
 
-// Exact Verbatim Delivery (Zero word changes, zero added noise)
-function buildVerbatimPayload(bodyText) {
-  const cleanBody = bodyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  const hasHtml = /<[a-z][\s\S]*>/i.test(cleanBody);
-
-  if (hasHtml) {
-    return {
-      text: cleanBody.replace(/<[^>]+>/g, '').trim(),
-      html: cleanBody
-    };
-  }
-
-  // Pure clean plain text (Primary Inbox landing rate highest)
-  return {
-    text: cleanBody
-  };
+function createPlainTextFromHtml(html) {
+  if (!html) return '';
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*[\/]?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\n\s*\n/g, '\n\n')
+    .trim();
 }
 
 /* ==========================================================================
    API ROUTES
    ========================================================================== */
+app.get('/', (req, res) => {
+  const filePath1 = path.join(process.cwd(), 'public', 'index.html');
+  const filePath2 = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(filePath1)) return res.sendFile(filePath1);
+  if (fs.existsSync(filePath2)) return res.sendFile(filePath2);
+  return res.status(200).send('<h1>Server Running Safely</h1>');
+});
+
 app.post('/api/auth', (req, res) => {
   const { password } = req.body;
-  if (password === SITE_PASSWORD || password === '@#@#' || password === 'Y##') {
-    return res.json({ success: true, message: 'Authorized' });
-  }
+  if (password === SITE_PASSWORD) return res.json({ success: true, message: 'Authorized' });
   return res.status(401).json({ success: false, message: 'Unauthorized Password' });
 });
 
@@ -209,12 +226,15 @@ app.post('/api/verify', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Credentials required' });
   }
 
-  if (cfToken && !(await verifyTurnstileToken(cfToken, clientIp))) {
-    return res.status(403).json({ success: false, message: 'Security Verification Failed' });
+  if (cfToken) {
+    const isHuman = await verifyTurnstileToken(cfToken, clientIp);
+    if (!isHuman) {
+      return res.status(403).json({ success: false, message: 'Security Verification Failed' });
+    }
   }
 
   try {
-    const transporter = getPort465Transporter(email, appPassword);
+    const transporter = getPort587Transporter(email, appPassword);
     await transporter.verify();
     return res.json({ success: true, message: 'SMTP verified successfully' });
   } catch (error) {
@@ -226,14 +246,13 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   STREAMING DISPATCH ROUTE (Exact 1 Blitch = 8 Emails Parallel)
+   INBOX-OPTIMIZED DISPATCH ROUTE (Batch 6 + Micro-Staggering)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders?.();
 
   const { email, appPassword, senderName, subject, messageBody, recipients, cfToken } = req.body;
   const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -244,10 +263,13 @@ app.post('/api/send-stream', async (req, res) => {
     return;
   }
 
-  if (cfToken && !(await verifyTurnstileToken(cfToken, clientIp))) {
-    res.write(`data: ${JSON.stringify({ success: false, error: 'Turnstile Verification Failed' })}\n\n`);
-    res.end();
-    return;
+  if (cfToken) {
+    const isHuman = await verifyTurnstileToken(cfToken, clientIp);
+    if (!isHuman) {
+      res.write(`data: ${JSON.stringify({ success: false, error: 'Turnstile Verification Failed' })}\n\n`);
+      res.end();
+      return;
+    }
   }
 
   const cleanEmail = email.toLowerCase().trim();
@@ -255,11 +277,11 @@ app.post('/api/send-stream', async (req, res) => {
   globalSession.stopRequested = false;
 
   const keepAlivePing = setInterval(() => {
-    try { res.write(': keep-alive\n\n'); } catch {}
-  }, 2500);
+    res.write(': keep-alive\n\n');
+  }, 4000);
 
-  const transporter = getPort465Transporter(email, appPassword);
-  const BATCH_SIZE = 8; // Exact 8 emails per blitch
+  const transporter = getPort587Transporter(email, appPassword);
+  const BATCH_SIZE = 6;
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -267,59 +289,67 @@ app.post('/api/send-stream', async (req, res) => {
       break;
     }
 
-    const batch = recipients.slice(i, i + BATCH_SIZE);
+    const currentBatch = recipients.slice(i, i + BATCH_SIZE);
 
-    const sendPromises = batch.map(async (rawRecipient, idx) => {
+    // Micro-staggering inside the batch to avoid simultaneous TLS handshake flags
+    const sendPromises = currentBatch.map(async (rawRecipient, index) => {
+      await delay(index * 150); // 150ms delay per thread in batch
+      
       const recipient = parseRecipientData(rawRecipient);
 
       if (!recipient.email) {
         return { success: false, recipient: '', error: 'Invalid Email' };
       }
 
-      // Micro stagger (60ms) prevents socket handshake clash across 8 pipes
-      if (idx > 0) {
-        await new Promise(r => setTimeout(r, idx * 60));
-      }
-
       try {
-        const personalizedSubject = personalizeContent(subject, recipient).trim();
+        const personalizedSubject = personalizeContent(subject, recipient);
         const personalizedBody = personalizeContent(messageBody, recipient);
-        const mailPayload = buildVerbatimPayload(personalizedBody);
+        const isHtml = /<[a-z][\s\S]*>/i.test(personalizedBody);
 
-        // Standard clean envelope: Google will attach official SPF, DKIM & ARC signatures
+        const invisibleSalt = getInvisibleHash();
+        const innerContent = isHtml 
+          ? personalizedBody 
+          : personalizedBody.replace(/\n/g, '<br>');
+
+        // Natural HTML block without marketing wrapper signatures
+        const formattedHtml = `${innerContent}${invisibleSalt}`;
+        const plainTextFormatted = createPlainTextFromHtml(personalizedBody) + invisibleSalt;
+
+        // Clean natural email payload
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          subject: personalizedSubject || 'Update',
-          ...mailPayload
+          replyTo: cleanEmail,
+          subject: (personalizedSubject || 'Update') + invisibleSalt,
+          html: formattedHtml,
+          text: plainTextFormatted
         };
 
-        await transporter.sendMail(mailOptions);
-        return { success: true, recipient: recipient.email, name: recipient.name };
+        const info = await transporter.sendMail(mailOptions);
+        return { 
+          success: true, 
+          recipient: recipient.email, 
+          name: recipient.name, 
+          ref: info.messageId || 'SENT' 
+        };
 
       } catch (err) {
         return { success: false, recipient: recipient.email, error: err.message };
       }
     });
 
-    const results = await Promise.allSettled(sendPromises);
+    const batchResults = await Promise.allSettled(sendPromises);
 
-    for (const resItem of results) {
+    for (const resItem of batchResults) {
       if (resItem.status === 'fulfilled') {
-        const payload = resItem.value;
-        if (payload.success) {
-          io.emit('mail_sent', payload);
-        } else {
-          io.emit('mail_error', payload);
-        }
-        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        res.write(`data: ${JSON.stringify(resItem.value)}\n\n`);
       }
     }
 
-    // Cooling pause between 8-email blitches (2.2s - 3.2s) to prevent spam flagging
-    if (i + BATCH_SIZE < recipients.length && !globalSession.stopRequested) {
-      const cooldown = Math.floor(2200 + Math.random() * 1000);
-      await new Promise(resolve => setTimeout(resolve, cooldown));
+    // 1 to 2 seconds randomized delay between 6-mail batches
+    if (i + BATCH_SIZE < recipients.length) {
+      const batchDelay = Math.floor(Math.random() * 1000) + 1000;
+      await delay(batchDelay);
     }
   }
 
@@ -333,15 +363,17 @@ app.post('/api/stop', (req, res) => {
   res.json({ success: true, message: 'Sending process stopped' });
 });
 
-app.get('*', (req, res) => {
-  const filePath = path.join(process.cwd(), 'public', 'index.html');
-  res.sendFile(filePath);
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
 });
 
-// Start Server locally; Export for Vercel
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
-  server.listen(PORT, () => {
-    console.log(`Mailer server running safely on port ${PORT}`);
+  app.listen(PORT, () => {
+    console.log(`🚀 Mailer server running safely on port ${PORT}`);
   });
 }
 
