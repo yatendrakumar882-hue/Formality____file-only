@@ -1,206 +1,305 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const gateForm = document.getElementById('gate-form');
-  const gatePassword = document.getElementById('gate-password');
-  const gateError = document.getElementById('gate-error');
-  const passwordGate = document.getElementById('password-gate');
-  const mainApp = document.getElementById('main-app');
-  const toggleGatePassword = document.getElementById('toggle-gate-password');
 
-  const senderNameInput = document.getElementById('sender-name');
-  const emailInput = document.getElementById('dashboard-email');
-  const passwordInput = document.getElementById('dashboard-password');
-  const subjectInput = document.getElementById('subject');
-  const messageBodyInput = document.getElementById('message-body');
-  const recipientsInput = document.getElementById('recipients-input');
-  const detectedCount = document.getElementById('detected-count');
-  const togglePassword = document.getElementById('toggle-password');
+    // ==================== PASSWORD GATE & LOGOUT ====================
+    const passwordGate = document.getElementById('password-gate');
+    const mainApp = document.getElementById('main-app');
+    const gateForm = document.getElementById('gate-form');
+    const gatePassword = document.getElementById('gate-password');
+    const gateError = document.getElementById('gate-error');
+    const gateSubmitBtn = document.getElementById('gate-submit-btn');
+    const toggleGatePassword = document.getElementById('toggle-gate-password');
+    const logoutBtn = document.getElementById('logout-btn');
 
-  const sendBtn = document.getElementById('send-btn');
-  const stopBtn = document.getElementById('stop-btn');
-  const logoutBtn = document.getElementById('logout-btn');
-
-  const statTotal = document.getElementById('stat-total');
-  const statSent = document.getElementById('stat-sent');
-  const statFailed = document.getElementById('stat-failed');
-  const statRemaining = document.getElementById('stat-remaining');
-  const progressBar = document.getElementById('progress-bar');
-  const statusText = document.getElementById('status-text');
-  const statusIcon = document.getElementById('status-icon');
-
-  // Load Saved Credentials
-  if (localStorage.getItem('auth_passed') === 'true') {
-    passwordGate.classList.add('hidden');
-    mainApp.classList.remove('hidden');
-  }
-
-  emailInput.value = localStorage.getItem('saved_email') || '';
-  passwordInput.value = localStorage.getItem('saved_pass') || '';
-  senderNameInput.value = localStorage.getItem('saved_name') || '';
-
-  // Gate Verification
-  gateForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    gateError.classList.add('hidden');
-
-    try {
-      const res = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: gatePassword.value })
-      });
-      const data = await res.json();
-      if (data.success) {
-        localStorage.setItem('auth_passed', 'true');
+    if (sessionStorage.getItem('authenticated') === 'true') {
         passwordGate.classList.add('hidden');
         mainApp.classList.remove('hidden');
-      } else {
-        gateError.classList.remove('hidden');
-      }
-    } catch {
-      gateError.classList.remove('hidden');
-    }
-  });
-
-  // Toggle Passwords
-  toggleGatePassword?.addEventListener('click', () => {
-    gatePassword.type = gatePassword.type === 'password' ? 'text' : 'password';
-  });
-
-  togglePassword?.addEventListener('click', () => {
-    passwordInput.type = passwordInput.type === 'password' ? 'text' : 'password';
-  });
-
-  // Double Click Logout
-  logoutBtn.addEventListener('dblclick', () => {
-    localStorage.removeItem('auth_passed');
-    window.location.reload();
-  });
-
-  // Recipients Parser
-  function getCleanRecipientsList() {
-    const raw = recipientsInput.value.trim();
-    if (!raw) return [];
-    return raw
-      .split(/[\n,;]+/)
-      .map(e => e.trim())
-      .filter(e => e && e.includes('@'));
-  }
-
-  recipientsInput.addEventListener('input', () => {
-    const list = getCleanRecipientsList();
-    detectedCount.textContent = `${list.length} found`;
-    statTotal.textContent = list.length;
-    statRemaining.textContent = list.length;
-  });
-
-  // Send Streaming Event Handler
-  sendBtn.addEventListener('click', async () => {
-    const recipients = getCleanRecipientsList();
-    if (recipients.length === 0) {
-      alert('Please enter valid recipient emails.');
-      return;
+    } else {
+        passwordGate.classList.remove('hidden');
+        mainApp.classList.add('hidden');
     }
 
-    if (!emailInput.value || !passwordInput.value || !subjectInput.value || !messageBodyInput.value) {
-      alert('Please fill all required fields.');
-      return;
-    }
+    toggleGatePassword.addEventListener('click', () => {
+        const type = gatePassword.getAttribute('type') === 'password' ? 'text' : 'password';
+        gatePassword.setAttribute('type', type);
+        toggleGatePassword.innerHTML = type === 'password' ? '<i class="fa-regular fa-eye"></i>' : '<i class="fa-regular fa-eye-slash"></i>';
+    });
 
-    // Save Creds
-    localStorage.setItem('saved_email', emailInput.value);
-    localStorage.setItem('saved_pass', passwordInput.value);
-    localStorage.setItem('saved_name', senderNameInput.value);
+    gateForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const password = gatePassword.value.trim();
+        if (!password) return;
 
-    let cfToken = '';
-    if (window.turnstile) {
-      cfToken = window.turnstile.getResponse();
-    }
+        gateSubmitBtn.disabled = true;
+        gateSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verifying...';
+        gateError.classList.add('hidden');
 
-    sendBtn.classList.add('hidden');
-    stopBtn.classList.remove('hidden');
+        try {
+            const response = await fetch('/api/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
 
-    let sent = 0;
-    let failed = 0;
-    const total = recipients.length;
+            const result = await response.json();
 
-    statTotal.textContent = total;
-    statSent.textContent = '0';
-    statFailed.textContent = '0';
-    statRemaining.textContent = total;
-    progressBar.style.width = '0%';
-    statusText.textContent = 'Sending in batches of 2...';
-    statusIcon.className = 'fa-solid fa-spinner fa-spin text-primary';
-
-    try {
-      const response = await fetch('/api/send-stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: emailInput.value,
-          appPassword: passwordInput.value,
-          senderName: senderNameInput.value,
-          subject: subjectInput.value,
-          messageBody: messageBodyInput.value,
-          recipients: recipients,
-          cfToken: cfToken
-        })
-      });
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // Incomplete line preserve
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const rawData = line.slice(6).trim();
-            if (rawData === '[DONE]') break;
-
-            try {
-              const res = JSON.parse(rawData);
-              if (res.success) {
-                sent++;
-                statSent.textContent = sent;
-              } else if (res.recipient) {
-                failed++;
-                statFailed.textContent = failed;
-              }
-
-              const remaining = Math.max(0, total - (sent + failed));
-              statRemaining.textContent = remaining;
-              const percent = Math.round(((sent + failed) / total) * 100);
-              progressBar.style.width = `${percent}%`;
-            } catch {}
-          }
+            if (result.success) {
+                sessionStorage.setItem('authenticated', 'true');
+                passwordGate.classList.add('gate-unlocked');
+                setTimeout(() => {
+                    passwordGate.classList.add('hidden');
+                    mainApp.classList.remove('hidden');
+                }, 400);
+            } else {
+                gateError.classList.remove('hidden');
+                gatePassword.value = '';
+                gatePassword.focus();
+            }
+        } catch (err) {
+            gateError.querySelector('span').textContent = 'Connection error. Try again.';
+            gateError.classList.remove('hidden');
+        } finally {
+            gateSubmitBtn.disabled = false;
+            gateSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> Enter';
         }
-      }
+    });
 
-      statusText.textContent = 'Completed!';
-      statusIcon.className = 'fa-solid fa-circle-check text-success';
+    // Real Double-Click Logout Handler
+    if (logoutBtn) {
+        logoutBtn.addEventListener('dblclick', () => {
+            sessionStorage.removeItem('authenticated');
+            window.location.reload();
+        });
 
-    } catch (err) {
-      statusText.textContent = `Error: ${err.message}`;
-      statusIcon.className = 'fa-solid fa-circle-xmark text-danger';
-    } finally {
-      sendBtn.classList.remove('hidden');
-      stopBtn.classList.add('hidden');
-      if (window.turnstile) window.turnstile.reset();
+        let clickTimer;
+        logoutBtn.addEventListener('click', () => {
+            clearTimeout(clickTimer);
+            clickTimer = setTimeout(() => {
+                logoutBtn.classList.add('btn-shake');
+                setTimeout(() => logoutBtn.classList.remove('btn-shake'), 400);
+            }, 250);
+        });
     }
-  });
 
-  // Stop Action
-  stopBtn.addEventListener('click', async () => {
-    await fetch('/api/stop', { method: 'POST' });
-    statusText.textContent = 'Stopped by user';
-    statusIcon.className = 'fa-solid fa-circle-stop text-warning';
-    sendBtn.classList.remove('hidden');
-    stopBtn.classList.add('hidden');
-  });
+    // ==================== MAIN DISPATCH ENGINE ====================
+    const dashboardEmail = document.getElementById('dashboard-email');
+    const dashboardPassword = document.getElementById('dashboard-password');
+    const togglePasswordBtn = document.getElementById('toggle-password');
+
+    const senderName = document.getElementById('sender-name');
+    const subject = document.getElementById('subject');
+    const messageBody = document.getElementById('message-body');
+
+    const recipientsInput = document.getElementById('recipients-input');
+    const detectedCount = document.getElementById('detected-count');
+    const emailValidationError = document.getElementById('email-validation-error');
+
+    const statTotal = document.getElementById('stat-total');
+    const statSent = document.getElementById('stat-sent');
+    const statFailed = document.getElementById('stat-failed');
+    const statRemaining = document.getElementById('stat-remaining');
+    const progressBar = document.getElementById('progress-bar');
+    const statusIcon = document.getElementById('status-icon');
+    const statusText = document.getElementById('status-text');
+
+    const sendBtn = document.getElementById('send-btn');
+    const stopBtn = document.getElementById('stop-btn');
+
+    let extractedEmails = [];
+    let isSending = false;
+    let stopRequested = false;
+
+    togglePasswordBtn.addEventListener('click', () => {
+        const type = dashboardPassword.getAttribute('type') === 'password' ? 'text' : 'password';
+        dashboardPassword.setAttribute('type', type);
+        togglePasswordBtn.innerHTML = type === 'password' ? '<i class="fa-regular fa-eye"></i>' : '<i class="fa-regular fa-eye-slash"></i>';
+    });
+
+    recipientsInput.addEventListener('input', extractEmails);
+
+    function extractEmails() {
+        const text = recipientsInput.value;
+        if (!text.trim()) {
+            extractedEmails = [];
+            detectedCount.textContent = '0 found';
+            return;
+        }
+
+        const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi;
+        const matches = text.match(emailRegex) || [];
+        extractedEmails = [...new Set(matches.map(e => e.toLowerCase().trim()))];
+
+        detectedCount.textContent = `${extractedEmails.length} found`;
+        if (extractedEmails.length > 0) {
+            emailValidationError.classList.add('hidden');
+        }
+    }
+
+    sendBtn.addEventListener('click', async () => {
+        if (isSending) return;
+
+        const emailVal = dashboardEmail.value.trim();
+        const appPasswordVal = dashboardPassword.value.trim();
+        const senderNameVal = senderName.value.trim();
+        const subjectVal = subject.value.trim();
+        const messageBodyVal = messageBody.value.trim();
+
+        if (!emailVal || !appPasswordVal || !senderNameVal || !subjectVal || !messageBodyVal) {
+            alert('Please fill in all input fields and write the email content.');
+            return;
+        }
+
+        if (extractedEmails.length === 0) {
+            emailValidationError.classList.remove('hidden');
+            alert('Please enter recipient emails.');
+            return;
+        }
+
+        const recipientsToSend = [...extractedEmails];
+        const turnstileResponse = document.querySelector('[name="cf-turnstile-response"]')?.value || "";
+
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verifying...';
+
+        try {
+            const verifyRes = await fetch('/api/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: emailVal, appPassword: appPasswordVal, cfToken: turnstileResponse })
+            });
+
+            const verifyResult = await verifyRes.json();
+            if (!verifyResult.success) {
+                alert(verifyResult.message || 'SMTP Authentication failed. Check your App Password.');
+                finishSendingUI();
+                return;
+            }
+
+            startSendingUI(recipientsToSend.length);
+
+            let sentCount = 0;
+            let failedCount = 0;
+
+            const response = await fetch('/api/send-stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: emailVal,
+                    appPassword: appPasswordVal,
+                    senderName: senderNameVal,
+                    subject: subjectVal,
+                    messageBody: messageBodyVal,
+                    recipients: recipientsToSend,
+                    cfToken: turnstileResponse
+                })
+            });
+
+            if (!response.ok) throw new Error('Streaming connection failed.');
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                if (stopRequested) break;
+
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.replace('data: ', '').trim();
+                        if (dataStr === '[DONE]') break;
+
+                        try {
+                            const event = JSON.parse(dataStr);
+                            if (event.success) {
+                                sentCount++;
+                                updateProgressUI(sentCount, failedCount, recipientsToSend.length, `Sent: ${event.recipient}`);
+                            } else {
+                                failedCount++;
+                                updateProgressUI(sentCount, failedCount, recipientsToSend.length, `Failed: ${event.recipient}`);
+                            }
+                        } catch (e) { }
+                    }
+                }
+            }
+
+            isSending = false;
+            if (stopRequested) {
+                statusIcon.className = 'fa-solid fa-circle-stop text-danger';
+                statusText.textContent = 'Process stopped by user.';
+            } else {
+                statusIcon.className = 'fa-solid fa-circle-check text-success';
+                statusText.textContent = 'Completed successfully!';
+            }
+
+        } catch (err) {
+            console.error('Send error:', err);
+            alert('Connection error occurred during send stream.');
+        } finally {
+            isSending = false;
+            finishSendingUI();
+        }
+    });
+
+    stopBtn.addEventListener('click', async () => {
+        stopRequested = true;
+        statusIcon.className = 'fa-solid fa-spinner fa-spin text-warning';
+        statusText.textContent = 'Stopping send process...';
+        stopBtn.disabled = true;
+
+        try {
+            await fetch('/api/stop', { method: 'POST' });
+        } catch (e) {
+            console.error('Stop error', e);
+        }
+    });
+
+    function startSendingUI(total) {
+        isSending = true;
+        stopRequested = false;
+
+        statTotal.textContent = total;
+        statSent.textContent = '0';
+        statFailed.textContent = '0';
+        statRemaining.textContent = total;
+        progressBar.style.width = '0%';
+
+        statusIcon.className = 'fa-solid fa-circle-notch fa-spin text-primary';
+        statusText.textContent = 'Sending emails...';
+
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...';
+        stopBtn.classList.remove('hidden');
+        stopBtn.disabled = false;
+    }
+
+    function updateProgressUI(sentCount, failedCount, total, customText) {
+        statSent.textContent = sentCount;
+        statFailed.textContent = failedCount;
+
+        const remaining = Math.max(0, total - (sentCount + failedCount));
+        statRemaining.textContent = remaining;
+
+        const percentage = Math.min(100, Math.round(((sentCount + failedCount) / total) * 100));
+        progressBar.style.width = `${percentage}%`;
+
+        if (customText && statusText && isSending && !stopRequested) {
+            statusText.textContent = customText;
+        }
+    }
+
+    function finishSendingUI() {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Send All';
+        stopBtn.classList.add('hidden');
+
+        if (window.turnstile) {
+            try { window.turnstile.reset(); } catch (e) { }
+        }
+    }
 });
