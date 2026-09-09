@@ -3,8 +3,6 @@ import express from 'express';
 import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
-import crypto from 'crypto';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,10 +16,7 @@ const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x000000000000
 const globalSession = { stopRequested: false };
 const poolMap = new Map();
 
-// Dynamic Helper Delays
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Express Setup
+// Express Configuration
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -54,16 +49,12 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   GMAIL TLS TRANSPORTER POOL (Optimized TLS & Connections)
+   GMAIL TLS TRANSPORTER POOL (Port 587 STARTTLS)
    ========================================================================== */
 function getPort587Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
   const key = `port587_${cleanEmail}_${cleanPass}`;
-
-  if (poolMap.size > 100) {
-    poolMap.clear();
-  }
 
   if (!poolMap.has(key)) {
     const transporter = nodemailer.createTransport({
@@ -76,14 +67,10 @@ function getPort587Transporter(email, appPassword) {
         pass: cleanPass
       },
       pool: true,
-      maxConnections: 6,
-      maxMessages: 100,
+      maxConnections: 6, // Aligned with 6-batch processing
+      maxMessages: 4800,
       socketTimeout: 30000,
-      connectionTimeout: 30000,
-      tls: {
-        rejectUnauthorized: true,
-        minVersion: 'TLSv1.2'
-      }
+      connectionTimeout: 30000
     });
     poolMap.set(key, transporter);
   }
@@ -91,7 +78,7 @@ function getPort587Transporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   RECIPIENT & SPINTAX HELPERS WITH INVISIBLE SPAM-BYPASS HASH
+   RECIPIENT NORMALIZATION & SPINTAX RESOLVER
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -158,16 +145,6 @@ function parseSpintax(text) {
   return spun.replace(/[\{\}]/g, '').trim();
 }
 
-// Zero-width space generator: Unseen by users, but changes body cryptographic fingerprint for Spam Bypassing
-function getInvisibleHash() {
-  const zeroWidthChars = ['\u200B', '\u200C', '\u200D', '\uFEFF'];
-  let hash = '';
-  for (let i = 0; i < 6; i++) {
-    hash += zeroWidthChars[Math.floor(Math.random() * zeroWidthChars.length)];
-  }
-  return hash;
-}
-
 function personalizeContent(template, recipient) {
   if (!template) return '';
   let content = parseSpintax(template);
@@ -205,11 +182,7 @@ function createPlainTextFromHtml(html) {
    API ROUTES
    ========================================================================== */
 app.get('/', (req, res) => {
-  const filePath1 = path.join(process.cwd(), 'public', 'index.html');
-  const filePath2 = path.join(__dirname, 'public', 'index.html');
-  if (fs.existsSync(filePath1)) return res.sendFile(filePath1);
-  if (fs.existsSync(filePath2)) return res.sendFile(filePath2);
-  return res.status(200).send('<h1>Server Running Safely</h1>');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.post('/api/auth', (req, res) => {
@@ -246,7 +219,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   INBOX-OPTIMIZED DISPATCH ROUTE (Batch 6 + Micro-Staggering)
+   STREAMING DISPATCH ROUTE (6 Emails Per Batch)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -281,7 +254,7 @@ app.post('/api/send-stream', async (req, res) => {
   }, 4000);
 
   const transporter = getPort587Transporter(email, appPassword);
-  const BATCH_SIZE = 6;
+  const BATCH_SIZE = 6; // Exact 6 emails per batch
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
@@ -289,67 +262,56 @@ app.post('/api/send-stream', async (req, res) => {
       break;
     }
 
-    const currentBatch = recipients.slice(i, i + BATCH_SIZE);
+    const batch = recipients.slice(i, i + BATCH_SIZE);
 
-    // Micro-staggering inside the batch to avoid simultaneous TLS handshake flags
-    const sendPromises = currentBatch.map(async (rawRecipient, index) => {
-      await delay(index * 150); // 150ms delay per thread in batch
-      
+    const sendPromises = batch.map(async (rawRecipient) => {
       const recipient = parseRecipientData(rawRecipient);
-
-      if (!recipient.email) {
-        return { success: false, recipient: '', error: 'Invalid Email' };
-      }
+      if (!recipient.email) return { success: false, recipient: '', error: 'Invalid Email' };
 
       try {
         const personalizedSubject = personalizeContent(subject, recipient);
         const personalizedBody = personalizeContent(messageBody, recipient);
         const isHtml = /<[a-z][\s\S]*>/i.test(personalizedBody);
 
-        const invisibleSalt = getInvisibleHash();
-        const innerContent = isHtml 
-          ? personalizedBody 
-          : personalizedBody.replace(/\n/g, '<br>');
+        // 2-line top gap + 15px font + #0f172a deep dark text
+        let formattedHtml = '';
+        if (isHtml) {
+          formattedHtml = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #0f172a; line-height: 1.65; padding-top: 24px;">${personalizedBody}</div>`;
+        } else {
+          formattedHtml = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #0f172a; line-height: 1.65; padding-top: 24px;">${personalizedBody.replace(/\n/g, '<br>')}</div>`;
+        }
 
-        // Natural HTML block without marketing wrapper signatures
-        const formattedHtml = `${innerContent}${invisibleSalt}`;
-        const plainTextFormatted = createPlainTextFromHtml(personalizedBody) + invisibleSalt;
+        const plainTextFormatted = `\n\n${createPlainTextFromHtml(formattedHtml)}`;
 
-        // Clean natural email payload
         const mailOptions = {
           from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
           replyTo: cleanEmail,
-          subject: (personalizedSubject || 'Update') + invisibleSalt,
+          subject: personalizedSubject || 'No Subject',
           html: formattedHtml,
           text: plainTextFormatted
         };
 
-        const info = await transporter.sendMail(mailOptions);
-        return { 
-          success: true, 
-          recipient: recipient.email, 
-          name: recipient.name, 
-          ref: info.messageId || 'SENT' 
-        };
+        await transporter.sendMail(mailOptions);
+        return { success: true, recipient: recipient.email, name: recipient.name };
 
       } catch (err) {
         return { success: false, recipient: recipient.email, error: err.message };
       }
     });
 
-    const batchResults = await Promise.allSettled(sendPromises);
+    const results = await Promise.allSettled(sendPromises);
 
-    for (const resItem of batchResults) {
-      if (resItem.status === 'fulfilled') {
+    for (const resItem of results) {
+      if (resItem.status === 'fulfilled' && resItem.value.recipient) {
         res.write(`data: ${JSON.stringify(resItem.value)}\n\n`);
       }
     }
 
-    // 1 to 2 seconds randomized delay between 6-mail batches
+    // Delay between 6-email batches
     if (i + BATCH_SIZE < recipients.length) {
-      const batchDelay = Math.floor(Math.random() * 1000) + 1000;
-      await delay(batchDelay);
+      const batchDelay = Math.floor(350 + Math.random() * 50);
+      await new Promise(resolve => setTimeout(resolve, batchDelay));
     }
   }
 
@@ -363,18 +325,8 @@ app.post('/api/stop', (req, res) => {
   res.json({ success: true, message: 'Sending process stopped' });
 });
 
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason);
+app.listen(PORT, () => {
+  console.log(`🚀 Mailer server running on port ${PORT}`);
 });
-
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-
-if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`🚀 Mailer server running safely on port ${PORT}`);
-  });
-}
 
 export default app;
