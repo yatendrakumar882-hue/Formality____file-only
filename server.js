@@ -23,7 +23,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ==========================================================================
-   1. TURNSTILE BOT PROTECTION
+   TURNSTILE BOT PROTECTION
    ========================================================================== */
 async function verifyTurnstileToken(token, remoteIp) {
   if (!token || TURNSTILE_SECRET_KEY.startsWith('1x0000000000000000000000000000000AA')) {
@@ -49,12 +49,12 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   2. GMAIL TRANSPORTER POOL (1-1 Single Connection Pipeline)
+   NATIVE GMAIL TRANSPORTER WITH PROXY BINDING
    ========================================================================== */
 function getNativeTransporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox_1by1_${cleanEmail}_${cleanPass}`;
+  const key = `inbox_perfect_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const proxyUrl = process.env.PROXY_URL;
@@ -68,7 +68,7 @@ function getNativeTransporter(email, appPassword) {
       },
       ...(agent && { agent }),
       pool: true,
-      maxConnections: 1, // Strict 1-by-1 pipeline connection
+      maxConnections: 1,
       maxMessages: 10000,
       socketTimeout: 30000,
       connectionTimeout: 30000
@@ -79,7 +79,7 @@ function getNativeTransporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   3. RECIPIENT & SPINTAX ENGINE
+   PARSER & SPINTAX ENGINE
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -163,7 +163,7 @@ function personalizeContent(template, recipient) {
 }
 
 /* ==========================================================================
-   4. API ROUTES
+   API ROUTES
    ========================================================================== */
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -200,7 +200,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   5. STREAMING ROUTE (Strict 1-By-1 Sequential Mailer)
+   EXACT SPEED STREAMING ROUTE (100 ms Delay Between Mails)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -242,7 +242,6 @@ app.post('/api/send-stream', async (req, res) => {
   const finalSubjectTemplate = (subject && subject.trim()) ? subject : defaultSubject;
   const finalBodyTemplate = (messageBody && messageBody.trim()) ? messageBody : defaultBody;
 
-  // Loop through recipients ONE BY ONE sequentially
   for (let i = 0; i < recipients.length; i++) {
     if (globalSession.stopRequested) {
       res.write(`data: ${JSON.stringify({ success: false, error: 'Stopped by User' })}\n\n`);
@@ -261,7 +260,7 @@ app.post('/api/send-stream', async (req, res) => {
         to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
         replyTo: cleanEmail,
         subject: personalizedSubject,
-        text: personalizedBody, // Pure Plain-Text format for 100% Primary Inbox landing
+        text: personalizedBody,
         headers: {
           'X-Priority': '3',
           'Importance': 'Normal'
@@ -278,9 +277,9 @@ app.post('/api/send-stream', async (req, res) => {
       res.write(`data: ${JSON.stringify(failData)}\n\n`);
     }
 
-    // Natural 2.5 second delay between each email (1-1 sending speed)
+    // Aapke code ki same speed (100 ms delay)
     if (i < recipients.length - 1 && !globalSession.stopRequested) {
-      await new Promise(resolve => setTimeout(resolve, 2500));
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 
