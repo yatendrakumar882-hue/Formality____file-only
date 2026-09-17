@@ -23,7 +23,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ==========================================================================
-   TURNSTILE BOT PROTECTION
+   1. TURNSTILE BOT PROTECTION
    ========================================================================== */
 async function verifyTurnstileToken(token, remoteIp) {
   if (!token || TURNSTILE_SECRET_KEY.startsWith('1x0000000000000000000000000000000AA')) {
@@ -49,19 +49,22 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   NATIVE GMAIL TRANSPORTER WITH PROXY BINDING
+   2. AUTHENTIC GMAIL NATIVE TRANSPORTER (100% SPF/DKIM SAFE)
    ========================================================================== */
 function getNativeTransporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `inbox_perfect_${cleanEmail}_${cleanPass}`;
+  const key = `perfect_inbox_${cleanEmail}_${cleanPass}`;
 
   if (!poolMap.has(key)) {
     const proxyUrl = process.env.PROXY_URL;
     const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : null;
 
+    // Strict Google Native Connection Options
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true, // Native TLS Encryption
       auth: {
         user: cleanEmail,
         pass: cleanPass
@@ -79,7 +82,7 @@ function getNativeTransporter(email, appPassword) {
 }
 
 /* ==========================================================================
-   PARSER & SPINTAX ENGINE
+   3. RECIPIENT DATA & SPINTAX ENGINE
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -163,7 +166,7 @@ function personalizeContent(template, recipient) {
 }
 
 /* ==========================================================================
-   API ROUTES
+   4. API ROUTES
    ========================================================================== */
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -200,7 +203,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   EXACT SPEED STREAMING ROUTE (100 ms Delay Between Mails)
+   5. HIGH-DELIVERY STREAMING ROUTE (100 ms Speed)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -236,7 +239,8 @@ app.post('/api/send-stream', async (req, res) => {
 
   const transporter = getNativeTransporter(email, appPassword);
 
-  const defaultSubject = 'Google';
+  // Perfect Native Cold Email Templates
+  const defaultSubject = '{Google|Google Listing|Site Overview}';
   const defaultBody = `Your site looks great, but it's not showing on Google yet. Can I email the quote?\n\nBest regards,\n${cleanSenderName}\nClient Relations & Business Development\n${cleanEmail}`;
 
   const finalSubjectTemplate = (subject && subject.trim()) ? subject : defaultSubject;
@@ -260,11 +264,7 @@ app.post('/api/send-stream', async (req, res) => {
         to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
         replyTo: cleanEmail,
         subject: personalizedSubject,
-        text: personalizedBody,
-        headers: {
-          'X-Priority': '3',
-          'Importance': 'Normal'
-        }
+        text: personalizedBody // Direct plain text land drives Google Smart Reply activation
       };
 
       await transporter.sendMail(mailOptions);
@@ -277,7 +277,7 @@ app.post('/api/send-stream', async (req, res) => {
       res.write(`data: ${JSON.stringify(failData)}\n\n`);
     }
 
-    // Aapke code ki same speed (100 ms delay)
+    // Exact 100 ms delay execution
     if (i < recipients.length - 1 && !globalSession.stopRequested) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
@@ -290,11 +290,11 @@ app.post('/api/send-stream', async (req, res) => {
 
 app.post('/api/stop', (req, res) => {
   globalSession.stopRequested = true;
-  res.json({ success: true, message: 'Sending process stopped' });
+  res.json({ success: true, message: 'Stopped by User' });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Primary Inbox Mailer running on port ${PORT}`);
+  console.log(`🚀 Perfect Primary Inbox Mailer running on port ${PORT}`);
 });
 
 export default app;
