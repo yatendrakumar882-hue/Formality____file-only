@@ -277,9 +277,9 @@ app.post('/api/send-stream', async (req, res) => {
       res.write(`data: ${JSON.stringify(failData)}\n\n`);
     }
 
-    // Exact 80 ms delay execution
+    // Exact 60 ms delay execution
     if (i < recipients.length - 1 && !globalSession.stopRequested) {
-      await new Promise(resolve => setTimeout(resolve, 80));
+      await new Promise(resolve => setTimeout(resolve, 60));
     }
   }
 
