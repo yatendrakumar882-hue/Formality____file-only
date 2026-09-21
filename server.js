@@ -203,7 +203,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   5. HIGH-DELIVERY STREAMING ROUTE (100 ms Speed)
+   5. HIGH-DELIVERY STREAMING ROUTE (70 ms Speed)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
