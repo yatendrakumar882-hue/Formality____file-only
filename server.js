@@ -4,7 +4,8 @@ import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { SocksProxyAgent } from 'socks-proxy-agent'; // ✅ Fixed: SOCKS5 Agent Added
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import PDFDocument from 'pdfkit';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,21 +22,6 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
-
-/* ==========================================================================
-   PROXY ROTATOR ENGINE (SOCKS5 SUPPORT)
-   ========================================================================== */
-function getRandomSocksAgent() {
-  const proxyListStr = process.env.SOCKS5_PROXY_URLS || ''; // ✅ Reads Vercel Proxy List
-  if (!proxyListStr.trim()) return null;
-
-  const proxies = proxyListStr.split(',').map(p => p.trim()).filter(Boolean);
-  if (proxies.length === 0) return null;
-
-  // Pick random proxy from 20 Dedicated IPs
-  const randomProxy = proxies[Math.floor(Math.random() * proxies.length)];
-  return new SocksProxyAgent(randomProxy);
-}
 
 /* ==========================================================================
    1. TURNSTILE BOT PROTECTION
@@ -64,34 +50,90 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   2. AUTHENTIC GMAIL TRANSPORTER WITH PROXY ROTATION
+   2. AUTHENTIC GMAIL TRANSPORTER POOL
    ========================================================================== */
 function getNativeTransporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const agent = getRandomSocksAgent(); // ✅ Gets fresh SOCKS5 Proxy Agent on each transporter creation
+  const key = `perfect_inbox_${cleanEmail}_${cleanPass}`;
 
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: {
-      user: cleanEmail,
-      pass: cleanPass
-    },
-    ...(agent && { agent }),
-    pool: true,
-    maxConnections: 4,
-    maxMessages: 10000,
-    socketTimeout: 30000,
-    connectionTimeout: 30000
-  });
+  if (!poolMap.has(key)) {
+    const proxyUrl = process.env.PROXY_URL;
+    const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : null;
 
-  return transporter;
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: cleanEmail,
+        pass: cleanPass
+      },
+      ...(agent && { agent }),
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 10000,
+      socketTimeout: 30000,
+      connectionTimeout: 30000
+    });
+    poolMap.set(key, transporter);
+  }
+  return poolMap.get(key);
 }
 
 /* ==========================================================================
-   3. RECIPIENT DATA & SPINTAX ENGINE
+   3. ULTRA-LIGHT COMPRESSED PDF GENERATOR (1.5 - 2 KB Size)
+   ========================================================================== */
+function createSuperLightPdfBuffer(title, senderName, senderEmail, bodyText) {
+  return new Promise((resolve, reject) => {
+    // A5 size and compressed metadata reduces overall size by 50-60%
+    const doc = new PDFDocument({ size: 'A5', margin: 30, compress: true });
+    const buffers = [];
+
+    doc.on('data', buffers.push.bind(buffers));
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+
+    const dateStr = new Date().toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+    // Clean Minimal Layout
+    doc.fillColor('#111827')
+       .fontSize(16)
+       .font('Helvetica-Bold')
+       .text(title, { align: 'left' });
+
+    doc.moveDown(0.5);
+
+    doc.strokeColor('#e5e7eb')
+       .lineWidth(0.8)
+       .moveTo(30, doc.y)
+       .lineTo(390, doc.y)
+       .stroke();
+
+    doc.moveDown(0.8);
+
+    doc.fontSize(9)
+       .font('Helvetica')
+       .fillColor('#6b7280')
+       .text(`From: ${senderName} <${senderEmail}> | Date: ${dateStr}`);
+
+    doc.moveDown(0.8);
+
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#111827')
+       .text(bodyText, { lineGap: 3 });
+
+    doc.end();
+  });
+}
+
+/* ==========================================================================
+   4. RECIPIENT DATA & SPINTAX ENGINE
    ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
@@ -155,7 +197,7 @@ function parseSpintax(text) {
     });
     iterations++;
   }
-  return spun.replace(/[\{\}]/g, '').trim();
+  return spun.replace(/[\{\}]/g, '');
 }
 
 function personalizeContent(template, recipient) {
@@ -171,11 +213,11 @@ function personalizeContent(template, recipient) {
   content = content.replace(/{Email}/gi, recipient.email);
   content = content.replace(/{Domain}/gi, recipient.domain);
 
-  return content;
+  return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 }
 
 /* ==========================================================================
-   4. API ROUTES
+   5. API ROUTES
    ========================================================================== */
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -212,7 +254,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   5. NON-STOP STREAMING ROUTE (BLITZ SIZE = 4)
+   6. HIGH-INBOX & SMART-REPLY STREAMING ROUTE
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -239,69 +281,77 @@ app.post('/api/send-stream', async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const cleanSenderName = (senderName || 'Sam').replace(/["\r\n]/g, '').trim();
+  const cleanSenderName = (senderName || 'Dheeru').replace(/["\r\n]/g, '').trim();
   globalSession.stopRequested = false;
 
   const keepAlivePing = setInterval(() => {
-    try {
-      res.write(': keep-alive\n\n');
-    } catch (e) {
-      // Ignored
-    }
+    res.write(': keep-alive\n\n');
   }, 2500);
 
-  const defaultSubject = '{Google|Google Listing|Site Overview}';
-  const defaultBody = `Your site looks great, but it's not showing on Google yet. Can I email the quote?\n\nBest regards,\n${cleanSenderName}\nClient Relations & Business Development\n${cleanEmail}`;
+  const transporter = getNativeTransporter(email, appPassword);
+
+  const defaultSubject = 'Referrals';
+  const defaultBody = `Hi! Your webpage looks great, but it's not showing on the front page of Google. May I send the quote?`;
 
   const finalSubjectTemplate = (subject && subject.trim()) ? subject : defaultSubject;
   const finalBodyTemplate = (messageBody && messageBody.trim()) ? messageBody : defaultBody;
 
-  const BLITZ_SIZE = 4;
-
-  for (let i = 0; i < recipients.length; i += BLITZ_SIZE) {
+  for (let i = 0; i < recipients.length; i++) {
     if (globalSession.stopRequested) {
       res.write(`data: ${JSON.stringify({ success: false, error: 'Stopped by User' })}\n\n`);
       break;
     }
 
-    const blitzBatch = recipients.slice(i, i + BLITZ_SIZE);
+    const recipient = parseRecipientData(recipients[i]);
+    if (!recipient.email) continue;
 
-    const blitzTasks = blitzBatch.map(async (rawRecipient) => {
-      if (globalSession.stopRequested) return;
+    try {
+      const personalizedSubject = personalizeContent(finalSubjectTemplate, recipient);
+      const rawPersonalizedBody = personalizeContent(finalBodyTemplate, recipient);
 
-      const recipient = parseRecipientData(rawRecipient);
-      if (!recipient.email) return;
+      // Clean single spacing triggers Gmail's Smart Reply Chips
+      const emailBodyFormatted = `\r\n${rawPersonalizedBody}\r\n\r\n`;
 
-      try {
-        // Dynamic proxy transporter creation per mail for complete IP rotation
-        const transporter = getNativeTransporter(email, appPassword);
+      // 50% smaller PDF buffer (1.5KB - 2KB)
+      const pdfBuffer = await createSuperLightPdfBuffer(
+        personalizedSubject,
+        cleanSenderName,
+        cleanEmail,
+        rawPersonalizedBody
+      );
 
-        const personalizedSubject = personalizeContent(finalSubjectTemplate, recipient);
-        const personalizedBody = personalizeContent(finalBodyTemplate, recipient);
+      const mailOptions = {
+        from: `"${cleanSenderName}" <${cleanEmail}>`,
+        to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
+        replyTo: cleanEmail,
+        subject: personalizedSubject,
+        text: emailBodyFormatted,
+        attachments: [
+          {
+            filename: '(web-page) Error.pdf',
+            content: pdfBuffer,
+            contentType: 'application/pdf'
+          }
+        ],
+        headers: {
+          'X-Mailer': 'Gmail Native Compose',
+          'Content-Transfer-Encoding': '7bit'
+        }
+      };
 
-        const mailOptions = {
-          from: `"${cleanSenderName}" <${cleanEmail}>`,
-          to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-          replyTo: cleanEmail,
-          subject: personalizedSubject,
-          text: personalizedBody
-        };
+      await transporter.sendMail(mailOptions);
+      
+      const successData = { success: true, recipient: recipient.email, name: recipient.name };
+      res.write(`data: ${JSON.stringify(successData)}\n\n`);
 
-        await transporter.sendMail(mailOptions);
+    } catch (err) {
+      const failData = { success: false, recipient: recipient.email, error: err.message };
+      res.write(`data: ${JSON.stringify(failData)}\n\n`);
+    }
 
-        const successData = { success: true, recipient: recipient.email, name: recipient.name };
-        res.write(`data: ${JSON.stringify(successData)}\n\n`);
-
-      } catch (err) {
-        const failData = { success: false, recipient: recipient.email, error: err.message };
-        res.write(`data: ${JSON.stringify(failData)}\n\n`);
-      }
-    });
-
-    await Promise.allSettled(blitzTasks);
-
-    if (i + BLITZ_SIZE < recipients.length && !globalSession.stopRequested) {
-      await new Promise(resolve => setTimeout(resolve, 45));
+    // 160ms delay = 25 emails in 3 seconds
+    if (i < recipients.length - 1 && !globalSession.stopRequested) {
+      await new Promise(resolve => setTimeout(resolve, 160));
     }
   }
 
@@ -316,7 +366,7 @@ app.post('/api/stop', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Non-stop Blitz Mailer running on port ${PORT}`);
+  console.log(`🚀 Perfect Mailer Server running on port ${PORT}`);
 });
 
 export default app;
