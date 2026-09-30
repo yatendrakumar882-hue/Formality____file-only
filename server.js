@@ -4,7 +4,7 @@ import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { HttpsProxyAgent } from 'https-proxy-agent';
+import { SocksProxyAgent } from 'socks-proxy-agent'; // ✅ Fixed: SOCKS5 Agent Added
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +21,21 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+/* ==========================================================================
+   PROXY ROTATOR ENGINE (SOCKS5 SUPPORT)
+   ========================================================================== */
+function getRandomSocksAgent() {
+  const proxyListStr = process.env.SOCKS5_PROXY_URLS || ''; // ✅ Reads Vercel Proxy List
+  if (!proxyListStr.trim()) return null;
+
+  const proxies = proxyListStr.split(',').map(p => p.trim()).filter(Boolean);
+  if (proxies.length === 0) return null;
+
+  // Pick random proxy from 20 Dedicated IPs
+  const randomProxy = proxies[Math.floor(Math.random() * proxies.length)];
+  return new SocksProxyAgent(randomProxy);
+}
 
 /* ==========================================================================
    1. TURNSTILE BOT PROTECTION
@@ -49,36 +64,30 @@ async function verifyTurnstileToken(token, remoteIp) {
 }
 
 /* ==========================================================================
-   2. AUTHENTIC GMAIL NATIVE TRANSPORTER (100% SPF/DKIM SAFE)
+   2. AUTHENTIC GMAIL TRANSPORTER WITH PROXY ROTATION
    ========================================================================== */
 function getNativeTransporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const key = `perfect_inbox_${cleanEmail}_${cleanPass}`;
+  const agent = getRandomSocksAgent(); // ✅ Gets fresh SOCKS5 Proxy Agent on each transporter creation
 
-  if (!poolMap.has(key)) {
-    const proxyUrl = process.env.PROXY_URL;
-    const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : null;
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: cleanEmail,
+      pass: cleanPass
+    },
+    ...(agent && { agent }),
+    pool: true,
+    maxConnections: 4,
+    maxMessages: 10000,
+    socketTimeout: 30000,
+    connectionTimeout: 30000
+  });
 
-    // Strict Google Native Connection Options
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true, // Native TLS Encryption
-      auth: {
-        user: cleanEmail,
-        pass: cleanPass
-      },
-      ...(agent && { agent }),
-      pool: true,
-      maxConnections: 1,
-      maxMessages: 10000,
-      socketTimeout: 30000,
-      connectionTimeout: 30000
-    });
-    poolMap.set(key, transporter);
-  }
-  return poolMap.get(key);
+  return transporter;
 }
 
 /* ==========================================================================
@@ -203,7 +212,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 /* ==========================================================================
-   5. HIGH-DELIVERY STREAMING ROUTE (70 ms Speed)
+   5. NON-STOP STREAMING ROUTE (BLITZ SIZE = 4)
    ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -234,51 +243,64 @@ app.post('/api/send-stream', async (req, res) => {
   globalSession.stopRequested = false;
 
   const keepAlivePing = setInterval(() => {
-    res.write(': keep-alive\n\n');
+    try {
+      res.write(': keep-alive\n\n');
+    } catch (e) {
+      // Ignored
+    }
   }, 2500);
 
-  const transporter = getNativeTransporter(email, appPassword);
-
-  // Perfect Native Cold Email Templates
   const defaultSubject = '{Google|Google Listing|Site Overview}';
   const defaultBody = `Your site looks great, but it's not showing on Google yet. Can I email the quote?\n\nBest regards,\n${cleanSenderName}\nClient Relations & Business Development\n${cleanEmail}`;
 
   const finalSubjectTemplate = (subject && subject.trim()) ? subject : defaultSubject;
   const finalBodyTemplate = (messageBody && messageBody.trim()) ? messageBody : defaultBody;
 
-  for (let i = 0; i < recipients.length; i++) {
+  const BLITZ_SIZE = 4;
+
+  for (let i = 0; i < recipients.length; i += BLITZ_SIZE) {
     if (globalSession.stopRequested) {
       res.write(`data: ${JSON.stringify({ success: false, error: 'Stopped by User' })}\n\n`);
       break;
     }
 
-    const recipient = parseRecipientData(recipients[i]);
-    if (!recipient.email) continue;
+    const blitzBatch = recipients.slice(i, i + BLITZ_SIZE);
 
-    try {
-      const personalizedSubject = personalizeContent(finalSubjectTemplate, recipient);
-      const personalizedBody = personalizeContent(finalBodyTemplate, recipient);
+    const blitzTasks = blitzBatch.map(async (rawRecipient) => {
+      if (globalSession.stopRequested) return;
 
-      const mailOptions = {
-        from: `"${cleanSenderName}" <${cleanEmail}>`,
-        to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
-        replyTo: cleanEmail,
-        subject: personalizedSubject,
-        text: personalizedBody // Direct plain text land drives Google Smart Reply activation
-      };
+      const recipient = parseRecipientData(rawRecipient);
+      if (!recipient.email) return;
 
-      await transporter.sendMail(mailOptions);
-      
-      const successData = { success: true, recipient: recipient.email, name: recipient.name };
-      res.write(`data: ${JSON.stringify(successData)}\n\n`);
+      try {
+        // Dynamic proxy transporter creation per mail for complete IP rotation
+        const transporter = getNativeTransporter(email, appPassword);
 
-    } catch (err) {
-      const failData = { success: false, recipient: recipient.email, error: err.message };
-      res.write(`data: ${JSON.stringify(failData)}\n\n`);
-    }
+        const personalizedSubject = personalizeContent(finalSubjectTemplate, recipient);
+        const personalizedBody = personalizeContent(finalBodyTemplate, recipient);
 
-    // Exact 45 ms delay execution
-    if (i < recipients.length - 1 && !globalSession.stopRequested) {
+        const mailOptions = {
+          from: `"${cleanSenderName}" <${cleanEmail}>`,
+          to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
+          replyTo: cleanEmail,
+          subject: personalizedSubject,
+          text: personalizedBody
+        };
+
+        await transporter.sendMail(mailOptions);
+
+        const successData = { success: true, recipient: recipient.email, name: recipient.name };
+        res.write(`data: ${JSON.stringify(successData)}\n\n`);
+
+      } catch (err) {
+        const failData = { success: false, recipient: recipient.email, error: err.message };
+        res.write(`data: ${JSON.stringify(failData)}\n\n`);
+      }
+    });
+
+    await Promise.allSettled(blitzTasks);
+
+    if (i + BLITZ_SIZE < recipients.length && !globalSession.stopRequested) {
       await new Promise(resolve => setTimeout(resolve, 45));
     }
   }
@@ -294,7 +316,7 @@ app.post('/api/stop', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Perfect Primary Inbox Mailer running on port ${PORT}`);
+  console.log(`🚀 Non-stop Blitz Mailer running on port ${PORT}`);
 });
 
 export default app;
