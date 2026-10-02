@@ -1,15 +1,21 @@
 import 'dotenv/config';
 import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
 import nodemailer from 'nodemailer';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { SocksProxyAgent } from 'socks-proxy-agent'; // ✅ Fixed: SOCKS5 Agent Added
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
 const PORT = process.env.PORT || 3000;
 const SITE_PASSWORD = process.env.SITE_PASSWORD || 'Y##';
 const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
@@ -20,26 +26,12 @@ const poolMap = new Map();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(process.cwd(), 'public')));
 
-/* ==========================================================================
-   PROXY ROTATOR ENGINE (SOCKS5 SUPPORT)
-   ========================================================================== */
-function getRandomSocksAgent() {
-  const proxyListStr = process.env.SOCKS5_PROXY_URLS || ''; // ✅ Reads Vercel Proxy List
-  if (!proxyListStr.trim()) return null;
+io.on('connection', (socket) => {
+  socket.on('disconnect', () => {});
+});
 
-  const proxies = proxyListStr.split(',').map(p => p.trim()).filter(Boolean);
-  if (proxies.length === 0) return null;
-
-  // Pick random proxy from 20 Dedicated IPs
-  const randomProxy = proxies[Math.floor(Math.random() * proxies.length)];
-  return new SocksProxyAgent(randomProxy);
-}
-
-/* ==========================================================================
-   1. TURNSTILE BOT PROTECTION
-   ========================================================================== */
 async function verifyTurnstileToken(token, remoteIp) {
   if (!token || TURNSTILE_SECRET_KEY.startsWith('1x0000000000000000000000000000000AA')) {
     return true;
@@ -58,41 +50,36 @@ async function verifyTurnstileToken(token, remoteIp) {
     });
     const outcome = await result.json();
     return outcome.success === true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
 
-/* ==========================================================================
-   2. AUTHENTIC GMAIL TRANSPORTER WITH PROXY ROTATION
-   ========================================================================== */
-function getNativeTransporter(email, appPassword) {
+function getPort587Transporter(email, appPassword) {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  const agent = getRandomSocksAgent(); // ✅ Gets fresh SOCKS5 Proxy Agent on each transporter creation
+  const key = `native_${cleanEmail}_${cleanPass}`;
 
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: {
-      user: cleanEmail,
-      pass: cleanPass
-    },
-    ...(agent && { agent }),
-    pool: true,
-    maxConnections: 4,
-    maxMessages: 10000,
-    socketTimeout: 30000,
-    connectionTimeout: 30000
-  });
-
-  return transporter;
+  if (!poolMap.has(key)) {
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false, // Standard STARTTLS
+      auth: {
+        user: cleanEmail,
+        pass: cleanPass
+      },
+      pool: true,
+      maxConnections: 6,
+      maxMessages: 500,
+      socketTimeout: 30000,
+      connectionTimeout: 30000
+    });
+    poolMap.set(key, transporter);
+  }
+  return poolMap.get(key);
 }
 
-/* ==========================================================================
-   3. RECIPIENT DATA & SPINTAX ENGINE
-   ========================================================================== */
 function parseRecipientData(input) {
   let email = '';
   let rawName = '';
@@ -146,7 +133,7 @@ function parseSpintax(text) {
   const regex = /\{([^{}]+)\}/s;
   let iterations = 0;
 
-  while (regex.test(spun) && iterations < 25) {
+  while (regex.test(spun) && iterations < 35) {
     spun = spun.replace(regex, (_, choices) => {
       if (!choices.includes('|')) return choices;
       const options = choices.split('|');
@@ -162,24 +149,16 @@ function personalizeContent(template, recipient) {
   if (!template) return '';
   let content = parseSpintax(template);
 
-  const displayName = recipient.name || recipient.firstName || 'there';
-  const displayFirstName = recipient.firstName || displayName;
+  const fallback = recipient.firstName || recipient.name || '';
 
-  content = content.replace(/{Name}/gi, displayName);
-  content = content.replace(/{FirstName}/gi, displayFirstName);
-  content = content.replace(/{First_Name}/gi, displayFirstName);
+  content = content.replace(/{Name}/gi, recipient.name || fallback || 'there');
+  content = content.replace(/{FirstName}/gi, recipient.firstName || fallback || 'there');
+  content = content.replace(/{First_Name}/gi, recipient.firstName || fallback || 'there');
   content = content.replace(/{Email}/gi, recipient.email);
   content = content.replace(/{Domain}/gi, recipient.domain);
 
   return content;
 }
-
-/* ==========================================================================
-   4. API ROUTES
-   ========================================================================== */
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 
 app.post('/api/auth', (req, res) => {
   const { password } = req.body;
@@ -195,11 +174,6 @@ app.post('/api/verify', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Credentials required' });
   }
 
-  const cleanPass = appPassword.replace(/\s+/g, '').trim();
-  if (cleanPass.length !== 16) {
-    return res.status(400).json({ success: false, message: 'App Password must be 16 characters' });
-  }
-
   if (cfToken) {
     const isHuman = await verifyTurnstileToken(cfToken, clientIp);
     if (!isHuman) {
@@ -207,13 +181,18 @@ app.post('/api/verify', async (req, res) => {
     }
   }
 
-  getNativeTransporter(email, appPassword);
-  return res.json({ success: true, message: 'SMTP ready' });
+  try {
+    const transporter = getPort587Transporter(email, appPassword);
+    await transporter.verify();
+    return res.json({ success: true, message: 'SMTP verified successfully' });
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      message: error.message || 'SMTP Auth Failed. Check 16-char App Password.'
+    });
+  }
 });
 
-/* ==========================================================================
-   5. NON-STOP STREAMING ROUTE (BLITZ SIZE = 4)
-   ========================================================================== */
 app.post('/api/send-stream', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -239,69 +218,77 @@ app.post('/api/send-stream', async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const cleanSenderName = (senderName || 'Sam').replace(/["\r\n]/g, '').trim();
+  const cleanSenderName = (senderName || '').replace(/["\r\n]/g, '').trim();
   globalSession.stopRequested = false;
 
   const keepAlivePing = setInterval(() => {
-    try {
-      res.write(': keep-alive\n\n');
-    } catch (e) {
-      // Ignored
-    }
-  }, 2500);
+    try { res.write(': keep-alive\n\n'); } catch {}
+  }, 4000);
 
-  const defaultSubject = '{Google|Google Listing|Site Overview}';
-  const defaultBody = `Your site looks great, but it's not showing on Google yet. Can I email the quote?\n\nBest regards,\n${cleanSenderName}\nClient Relations & Business Development\n${cleanEmail}`;
+  const transporter = getPort587Transporter(email, appPassword);
+  const BATCH_SIZE = 6;
 
-  const finalSubjectTemplate = (subject && subject.trim()) ? subject : defaultSubject;
-  const finalBodyTemplate = (messageBody && messageBody.trim()) ? messageBody : defaultBody;
-
-  const BLITZ_SIZE = 4;
-
-  for (let i = 0; i < recipients.length; i += BLITZ_SIZE) {
+  for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     if (globalSession.stopRequested) {
       res.write(`data: ${JSON.stringify({ success: false, error: 'Stopped by User' })}\n\n`);
       break;
     }
 
-    const blitzBatch = recipients.slice(i, i + BLITZ_SIZE);
+    const batch = recipients.slice(i, i + BATCH_SIZE);
 
-    const blitzTasks = blitzBatch.map(async (rawRecipient) => {
-      if (globalSession.stopRequested) return;
-
+    const sendPromises = batch.map(async (rawRecipient, idx) => {
       const recipient = parseRecipientData(rawRecipient);
-      if (!recipient.email) return;
+      if (!recipient.email) return { success: false, recipient: '', error: 'Invalid Email' };
 
       try {
-        // Dynamic proxy transporter creation per mail for complete IP rotation
-        const transporter = getNativeTransporter(email, appPassword);
+        if (idx > 0) {
+          await new Promise(resolve => setTimeout(resolve, Math.floor(150 + Math.random() * 100)));
+        }
 
-        const personalizedSubject = personalizeContent(finalSubjectTemplate, recipient);
-        const personalizedBody = personalizeContent(finalBodyTemplate, recipient);
+        const personalizedSubject = personalizeContent(subject, recipient);
+        const personalizedBody = personalizeContent(messageBody, recipient);
+        const isHtml = /<[a-z][\s\S]*>/i.test(personalizedBody);
+
+        const cleanBodyText = isHtml
+          ? personalizedBody
+          : personalizedBody.replace(/\n/g, '<br>');
+
+        // Pure standard native webmail formatting (No artificial styles, no wrappers)
+        const formattedHtml = `<div dir="ltr">${cleanBodyText}</div>`;
 
         const mailOptions = {
-          from: `"${cleanSenderName}" <${cleanEmail}>`,
+          from: cleanSenderName ? `"${cleanSenderName}" <${cleanEmail}>` : cleanEmail,
           to: recipient.name ? `"${recipient.name}" <${recipient.email}>` : recipient.email,
           replyTo: cleanEmail,
-          subject: personalizedSubject,
-          text: personalizedBody
+          subject: personalizedSubject || 'Hello',
+          html: formattedHtml,
+          text: personalizedBody.replace(/<[^>]+>/g, '')
         };
 
         await transporter.sendMail(mailOptions);
-
-        const successData = { success: true, recipient: recipient.email, name: recipient.name };
-        res.write(`data: ${JSON.stringify(successData)}\n\n`);
+        
+        const payload = { success: true, recipient: recipient.email, name: recipient.name };
+        io.emit('mail_sent', payload);
+        return payload;
 
       } catch (err) {
-        const failData = { success: false, recipient: recipient.email, error: err.message };
-        res.write(`data: ${JSON.stringify(failData)}\n\n`);
+        const errPayload = { success: false, recipient: recipient.email, error: err.message };
+        io.emit('mail_error', errPayload);
+        return errPayload;
       }
     });
 
-    await Promise.allSettled(blitzTasks);
+    const results = await Promise.allSettled(sendPromises);
 
-    if (i + BLITZ_SIZE < recipients.length && !globalSession.stopRequested) {
-      await new Promise(resolve => setTimeout(resolve, 45));
+    for (const resItem of results) {
+      if (resItem.status === 'fulfilled' && resItem.value.recipient) {
+        res.write(`data: ${JSON.stringify(resItem.value)}\n\n`);
+      }
+    }
+
+    if (i + BATCH_SIZE < recipients.length) {
+      const batchDelay = Math.floor(800 + Math.random() * 400);
+      await new Promise(resolve => setTimeout(resolve, batchDelay));
     }
   }
 
@@ -312,11 +299,15 @@ app.post('/api/send-stream', async (req, res) => {
 
 app.post('/api/stop', (req, res) => {
   globalSession.stopRequested = true;
-  res.json({ success: true, message: 'Stopped by User' });
+  res.json({ success: true, message: 'Sending process stopped' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Non-stop Blitz Mailer running on port ${PORT}`);
+app.use((req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+});
+
+server.listen(PORT, () => {
+  console.log(`🚀 Mailer server running on port ${PORT}`);
 });
 
 export default app;
