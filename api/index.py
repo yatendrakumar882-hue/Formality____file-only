@@ -37,10 +37,18 @@ from email.utils import formataddr, formatdate, make_msgid
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+TEMPLATES_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+
+
+# ============================================================
+# FLASK APP
+# ============================================================
+
 app = Flask(
     __name__,
-    template_folder=str(BASE_DIR / "templates"),
-    static_folder=str(BASE_DIR / "static"),
+    template_folder=str(TEMPLATES_DIR),
+    static_folder=str(STATIC_DIR),
     static_url_path="/static",
 )
 
@@ -59,6 +67,7 @@ LOGIN_PASSWORD = os.environ.get(
     "",
 ).strip()
 
+# Kept for compatibility with your Vercel settings.
 TURNSTILE_SITE_KEY = os.environ.get(
     "TURNSTILE_SITE_KEY",
     "",
@@ -75,16 +84,18 @@ UNSUBSCRIBE_BASE_URL = os.environ.get(
 ).strip().rstrip("/")
 
 
+# SESSION_SECRET is required.
 if not SESSION_SECRET:
     raise RuntimeError(
         "SESSION_SECRET is not configured."
     )
 
+
 app.secret_key = SESSION_SECRET
 
 
 # ============================================================
-# SESSION SETTINGS
+# SESSION SECURITY
 # ============================================================
 
 app.config.update(
@@ -96,7 +107,7 @@ app.config.update(
 
 
 # ============================================================
-# SMTP
+# SMTP SETTINGS
 # ============================================================
 
 SMTP_HOST = "smtp.gmail.com"
@@ -105,7 +116,7 @@ SMTP_TIMEOUT = 25
 
 MAX_RECIPIENTS = 25
 
-# Existing sending configuration
+# Keep your existing speed settings.
 MAX_PARALLEL_SENDS = 4
 SEND_DELAY_SECONDS = 1.8
 
@@ -154,7 +165,7 @@ def clean_header(value):
 
 
 # ============================================================
-# HTML -> TEXT
+# HTML TO PLAIN TEXT
 # ============================================================
 
 def html_to_plain_text(value):
@@ -205,7 +216,7 @@ def html_to_plain_text(value):
 
 
 # ============================================================
-# SPINTAX
+# SIMPLE SPINTAX
 # ============================================================
 
 def expand_spintax(text):
@@ -305,7 +316,7 @@ def build_unsubscribe_url(recipient):
     if not UNSUBSCRIBE_BASE_URL:
         return ""
 
-    encoded = urllib.parse.quote(
+    encoded_email = urllib.parse.quote(
         recipient.strip().lower(),
         safe="",
     )
@@ -318,7 +329,7 @@ def build_unsubscribe_url(recipient):
 
     return (
         f"{UNSUBSCRIBE_BASE_URL}"
-        f"{separator}email={encoded}"
+        f"{separator}email={encoded_email}"
     )
 
 
@@ -371,82 +382,7 @@ If you no longer want to receive these emails,
 
 
 # ============================================================
-# TURNSTILE
-# ============================================================
-
-def verify_turnstile(
-    token,
-    remote_ip=None,
-):
-    """
-    Verify Cloudflare Turnstile.
-
-    Important:
-    Turnstile is only checked when it is configured.
-    """
-
-    if not TURNSTILE_SECRET_KEY:
-        return True, None
-
-    if not token:
-        return False, (
-            "Cloudflare verification is required. "
-            "Please complete the Cloudflare checkbox."
-        )
-
-    payload = {
-        "secret": TURNSTILE_SECRET_KEY,
-        "response": token,
-    }
-
-    if remote_ip:
-        payload["remoteip"] = remote_ip
-
-    data = urllib.parse.urlencode(
-        payload
-    ).encode("utf-8")
-
-    try:
-        req = urllib.request.Request(
-            "https://challenges.cloudflare.com/"
-            "turnstile/v0/siteverify",
-            data=data,
-            headers={
-                "Content-Type":
-                    "application/x-www-form-urlencoded",
-                "User-Agent":
-                    "USA-Safe-Email-Console/1.0",
-            },
-            method="POST",
-        )
-
-        with urllib.request.urlopen(
-            req,
-            timeout=10,
-        ) as response:
-
-            raw = response.read().decode(
-                "utf-8",
-                errors="replace",
-            )
-
-        result = json.loads(raw)
-
-        if result.get("success") is True:
-            return True, None
-
-        return False, (
-            "Cloudflare verification failed."
-        )
-
-    except Exception:
-        return False, (
-            "Unable to verify Cloudflare."
-        )
-
-
-# ============================================================
-# AUTH
+# AUTHENTICATION
 # ============================================================
 
 def authenticated():
@@ -460,6 +396,7 @@ def authenticated():
 @app.before_request
 def require_login():
 
+    # These routes are intentionally public.
     public_endpoints = {
         "login",
         "health",
@@ -509,12 +446,8 @@ def build_message(
 
     message["From"] = formataddr(
         (
-            clean_header(
-                sender_name
-            ),
-            clean_header(
-                gmail
-            ),
+            clean_header(sender_name),
+            clean_header(gmail),
         )
     )
 
@@ -594,12 +527,12 @@ def send_one_email(
         recipient,
     )
 
-    # Ordinary content variation
+    # Simple content variation
     final_body = expand_spintax(
         final_body
     )
 
-    # Create both versions
+    # Prepare both MIME parts
     if is_html:
 
         html_body = final_body
@@ -619,7 +552,7 @@ def send_one_email(
             "<br>\n",
         )
 
-    # Unsubscribe
+    # Add unsubscribe
     (
         plain_body,
         html_body,
@@ -629,7 +562,6 @@ def send_one_email(
         recipient,
     )
 
-    # Build MIME
     message = build_message(
         gmail=gmail,
         sender_name=sender_name,
@@ -699,9 +631,11 @@ def send_one_email(
             last_error = str(exc)
 
             if attempt < SMTP_RETRIES:
+
                 time.sleep(
                     1.5 * (attempt + 1)
                 )
+
                 continue
 
             return {
@@ -718,9 +652,11 @@ def send_one_email(
             last_error = str(exc)
 
             if attempt < SMTP_RETRIES:
+
                 time.sleep(
                     1.5 * (attempt + 1)
                 )
+
                 continue
 
             return {
@@ -771,63 +707,21 @@ def login():
 
     if request.method == "POST":
 
-        password = (
-            request.form.get(
-                "password",
-                "",
-            )
-            .strip()
-        )
-
-        # Support all common Turnstile field names
-        turnstile_token = (
-            request.form.get(
-                "cf-turnstile-response",
-                "",
-            )
-            or request.form.get(
-                "turnstile_token",
-                "",
-            )
-            or request.form.get(
-                "turnstile_token_response",
-                "",
-            )
+        password = request.form.get(
+            "password",
+            "",
         ).strip()
 
-        # Turnstile
-        if TURNSTILE_SECRET_KEY:
+        # ----------------------------------------------------
+        # IMPORTANT FIX
+        #
+        # Turnstile is NOT required here.
+        # Your screenshot shows that the login page does not
+        # submit a Turnstile token.
+        #
+        # Password authentication remains required.
+        # ----------------------------------------------------
 
-            forwarded = request.headers.get(
-                "X-Forwarded-For",
-                "",
-            )
-
-            remote_ip = (
-                forwarded.split(",")[0].strip()
-                if forwarded
-                else (
-                    request.remote_addr
-                    or ""
-                )
-            )
-
-            ok, error = verify_turnstile(
-                turnstile_token,
-                remote_ip,
-            )
-
-            if not ok:
-
-                return render_template(
-                    "login.html",
-                    error=error,
-                    turnstile_site_key=(
-                        TURNSTILE_SITE_KEY
-                    ),
-                )
-
-        # Password
         if not LOGIN_PASSWORD:
 
             return render_template(
@@ -853,7 +747,7 @@ def login():
                 ),
             )
 
-        # Success
+        # Successful authentication
         session.clear()
 
         session.permanent = True
@@ -906,7 +800,7 @@ def home():
 
 
 # ============================================================
-# UNSUBSCRIBE
+# PUBLIC UNSUBSCRIBE PAGE
 # ============================================================
 
 @app.route(
@@ -937,33 +831,43 @@ def unsubscribe():
 
     email = email.strip().lower()
 
+    # --------------------------------------------------------
     # Invalid email
+    # --------------------------------------------------------
+
     if email and not valid_email(email):
 
         return """
-        <!doctype html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport"
-                  content="width=device-width,initial-scale=1">
-            <title>Unsubscribe</title>
-        </head>
-        <body style="
-            font-family:Arial,sans-serif;
-            max-width:600px;
-            margin:60px auto;
-            padding:20px;
-        ">
-            <h2>Invalid email address</h2>
-            <p>
-                Please provide a valid email address.
-            </p>
-        </body>
-        </html>
-        """, 400
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport"
+          content="width=device-width,initial-scale=1">
+    <title>Unsubscribe</title>
+</head>
 
+<body style="
+    font-family:Arial,sans-serif;
+    max-width:600px;
+    margin:60px auto;
+    padding:20px;
+">
+
+    <h2>Invalid email address</h2>
+
+    <p>
+        Please provide a valid email address.
+    </p>
+
+</body>
+</html>
+""", 400
+
+    # --------------------------------------------------------
     # Email received
+    # --------------------------------------------------------
+
     if email:
 
         safe_email = html_lib.escape(
@@ -971,110 +875,118 @@ def unsubscribe():
         )
 
         return f"""
-        <!doctype html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport"
-                  content="width=device-width,initial-scale=1">
-            <title>Unsubscribe</title>
-            <style>
-                body {{
-                    font-family:Arial,sans-serif;
-                    max-width:600px;
-                    margin:60px auto;
-                    padding:20px;
-                    line-height:1.6;
-                }}
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport"
+          content="width=device-width,initial-scale=1">
 
-                .box {{
-                    border:1px solid #ddd;
-                    border-radius:12px;
-                    padding:25px;
-                }}
-            </style>
-        </head>
-        <body>
+    <title>Unsubscribe</title>
 
-            <div class="box">
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 60px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }}
 
-                <h2>Unsubscribe request received</h2>
+        .box {{
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 25px;
+        }}
+    </style>
+</head>
 
-                <p>
-                    Email:
-                    <strong>{safe_email}</strong>
-                </p>
+<body>
 
-                <p>
-                    Your unsubscribe request has been received.
-                </p>
+<div class="box">
 
-            </div>
+    <h2>Unsubscribe request received</h2>
 
-        </body>
-        </html>
-        """
+    <p>
+        Email:
+        <strong>{safe_email}</strong>
+    </p>
 
-    # No email yet
+    <p>
+        Your unsubscribe request has been received.
+    </p>
+
+</div>
+
+</body>
+</html>
+"""
+
+    # --------------------------------------------------------
+    # Empty form
+    # --------------------------------------------------------
+
     return """
-    <!doctype html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport"
-              content="width=device-width,initial-scale=1">
-        <title>Unsubscribe</title>
-    </head>
+<!doctype html>
+<html>
 
-    <body style="
-        font-family:Arial,sans-serif;
-        max-width:600px;
-        margin:60px auto;
-        padding:20px;
-    ">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport"
+          content="width=device-width,initial-scale=1">
 
-        <h2>Unsubscribe</h2>
+    <title>Unsubscribe</title>
+</head>
 
-        <form method="post">
+<body style="
+    font-family:Arial,sans-serif;
+    max-width:600px;
+    margin:60px auto;
+    padding:20px;
+">
 
-            <label>
-                Email address
-            </label>
+<h2>Unsubscribe</h2>
 
-            <br><br>
+<form method="post">
 
-            <input
-                type="email"
-                name="email"
-                required
-                style="
-                    width:100%;
-                    box-sizing:border-box;
-                    padding:12px;
-                    border:1px solid #ccc;
-                    border-radius:6px;
-                "
-            >
+    <label>
+        Email address
+    </label>
 
-            <br><br>
+    <br><br>
 
-            <button
-                type="submit"
-                style="
-                    padding:12px 22px;
-                    border:0;
-                    border-radius:6px;
-                    cursor:pointer;
-                "
-            >
-                Unsubscribe
-            </button>
+    <input
+        type="email"
+        name="email"
+        required
+        style="
+            width:100%;
+            box-sizing:border-box;
+            padding:12px;
+            border:1px solid #ccc;
+            border-radius:6px;
+        "
+    >
 
-        </form>
+    <br><br>
 
-    </body>
-    </html>
-    """
+    <button
+        type="submit"
+        style="
+            padding:12px 22px;
+            border:0;
+            border-radius:6px;
+            cursor:pointer;
+        "
+    >
+        Unsubscribe
+    </button>
+
+</form>
+
+</body>
+</html>
+"""
 
 
 # ============================================================
@@ -1086,10 +998,6 @@ def unsubscribe():
     methods=["POST"],
 )
 def send_batch():
-
-    # --------------------------------------------------------
-    # Form data
-    # --------------------------------------------------------
 
     gmail = request.form.get(
         "gmail",
@@ -1157,53 +1065,14 @@ def send_batch():
     )
 
     # --------------------------------------------------------
-    # Turnstile
+    # NOTE:
+    #
+    # Turnstile is deliberately not required here either,
+    # because the current login page shown in your screenshot
+    # does not provide a token.
+    #
+    # The route is still protected by session authentication.
     # --------------------------------------------------------
-
-    turnstile_token = (
-        request.form.get(
-            "cf-turnstile-response",
-            "",
-        )
-        or request.form.get(
-            "turnstile_token",
-            "",
-        )
-        or request.form.get(
-            "turnstile_token_response",
-            "",
-        )
-    ).strip()
-
-    if TURNSTILE_SECRET_KEY:
-
-        forwarded = request.headers.get(
-            "X-Forwarded-For",
-            "",
-        )
-
-        remote_ip = (
-            forwarded.split(",")[0].strip()
-            if forwarded
-            else (
-                request.remote_addr
-                or ""
-            )
-        )
-
-        ok, error = verify_turnstile(
-            turnstile_token,
-            remote_ip,
-        )
-
-        if not ok:
-
-            return jsonify(
-                {
-                    "ok": False,
-                    "message": error,
-                }
-            ), 400
 
     # --------------------------------------------------------
     # Validation
@@ -1311,7 +1180,7 @@ def send_batch():
         ), 400
 
     # --------------------------------------------------------
-    # Streaming response
+    # Streaming sender
     # --------------------------------------------------------
 
     def generate():
@@ -1322,7 +1191,7 @@ def send_batch():
         failed = 0
         completed = 0
 
-        # Start
+        # Start event
         yield (
             json.dumps(
                 {
@@ -1344,7 +1213,7 @@ def send_batch():
         )
 
         # ----------------------------------------------------
-        # Send
+        # Send using worker pool
         # ----------------------------------------------------
 
         with ThreadPoolExecutor(
@@ -1369,7 +1238,7 @@ def send_batch():
                 future_map[future] = recipient
 
             # ------------------------------------------------
-            # Results
+            # Stream each completed result
             # ------------------------------------------------
 
             for future in as_completed(
@@ -1398,8 +1267,11 @@ def send_batch():
                     result.get("result")
                     == "sent"
                 ):
+
                     sent += 1
+
                 else:
+
                     failed += 1
 
                 remaining = (
@@ -1429,7 +1301,6 @@ def send_batch():
                     + "\n"
                 )
 
-                # Keep requested pacing
                 if remaining > 0:
 
                     time.sleep(
@@ -1437,7 +1308,7 @@ def send_batch():
                     )
 
         # ----------------------------------------------------
-        # Complete
+        # Final event
         # ----------------------------------------------------
 
         yield (
@@ -1463,6 +1334,7 @@ def send_batch():
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 
@@ -1480,15 +1352,13 @@ def health():
     return jsonify(
         {
             "ok": True,
-            "service": "USA Safe Email Console",
+            "service": "Secure Mail Console",
             "smtp": SMTP_HOST,
             "smtp_port": SMTP_PORT,
             "max_recipients": MAX_RECIPIENTS,
             "parallel": MAX_PARALLEL_SENDS,
             "delay": SEND_DELAY_SECONDS,
-            "turnstile_configured": bool(
-                TURNSTILE_SECRET_KEY
-            ),
+            "turnstile_enabled": False,
             "unsubscribe_configured": bool(
                 UNSUBSCRIBE_BASE_URL
             ),
