@@ -1,1 +1,90 @@
-asd
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Secure Login</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+
+    {% if turnstile_site_key %}
+    <script
+        src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+        async
+        defer
+    ></script>
+    {% endif %}
+</head>
+
+<body class="login-page">
+
+<div class="login-shell">
+
+    <div class="login-card">
+
+        <div class="brand-mark">
+            ✉
+        </div>
+
+        <h1>Secure Email Console</h1>
+
+        <p class="muted">
+            Sign in to continue.
+        </p>
+
+        {% if error %}
+        <div class="alert error">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <form
+            method="POST"
+            action="{{ url_for('login') }}"
+        >
+
+            <label for="password">
+                Password
+            </label>
+
+            <input
+                id="password"
+                name="password"
+                type="password"
+                placeholder="Enter password"
+                autocomplete="current-password"
+                required
+            >
+
+            {% if turnstile_site_key %}
+            <div class="turnstile-box">
+                <div
+                    class="cf-turnstile"
+                    data-sitekey="{{ turnstile_site_key }}"
+                ></div>
+            </div>
+            {% endif %}
+
+            <button
+                type="submit"
+                class="primary-button"
+            >
+                Sign In
+            </button>
+
+        </form>
+
+    </div>
+
+</div>
+
+</body>
+</html>
