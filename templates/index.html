@@ -1,1125 +1,1024 @@
 <!doctype html>
 <html lang="en">
-
 <head>
+    <meta charset="utf-8">
 
-<meta charset="utf-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
 
-<meta
-name="viewport"
-content="width=device-width, initial-scale=1"
->
+    <title>Secure Mail Console</title>
 
-<title>
-Secure Mail Console
-</title>
-
-<link
-rel="stylesheet"
-href="{{ url_for('static', filename='style.css') }}"
->
-
-<link
-rel="stylesheet"
-href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
->
-
-{% if turnstile_site_key %}
-
-<script
-src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-async
-defer
-></script>
-
-{% endif %}
-
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
 </head>
-
 
 <body>
 
+<div class="page">
 
-<header class="topbar">
+    <!-- =====================================================
+         HEADER
+    ====================================================== -->
 
-<div class="brand">
+    <header class="topbar">
 
-<div class="brand-icon">
-<i class="fa-solid fa-shield-halved"></i>
-</div>
+        <div class="brand">
+            <div class="shield">⬟</div>
 
-<div>
+            <div class="brand-text">
+                Secure Mail Console
+            </div>
+        </div>
 
-<strong>
-Secure Mail Console
-</strong>
+        <a
+            class="logout"
+            href="{{ url_for('logout') }}"
+        >
+            ↪ Logout
+        </a>
 
-<span>
-Authenticated mail sender
-</span>
+    </header>
 
-</div>
 
-</div>
+    <!-- =====================================================
+         TITLE
+    ====================================================== -->
 
+    <div class="section-title">
+        <span>➤</span>
+        <strong>Bulk Email Sender</strong>
+    </div>
 
-<a
-href="{{ url_for('logout') }}"
-class="logout-button"
->
 
-<i class="fa-solid fa-right-from-bracket"></i>
+    <!-- =====================================================
+         MAIN GRID
+    ====================================================== -->
 
-Logout
+    <main class="dashboard">
 
-</a>
+        <!-- =================================================
+             LEFT COLUMN
+        ================================================== -->
 
-</header>
+        <section class="card compose-card">
 
+            <div class="card-title">
+                <span>✎</span>
+                <strong>Compose Message</strong>
+            </div>
 
-<main class="dashboard">
 
+            <!-- Sender + Gmail -->
 
-<section class="compose-card">
+            <div class="two-fields">
 
+                <div class="field">
 
-<div class="card-heading">
+                    <label>
+                        Sender Name
+                    </label>
 
-<div>
+                    <input
+                        id="senderName"
+                        name="sender_name"
+                        type="text"
+                        placeholder="Your name"
+                    >
 
-<h1>
-Compose Email
-</h1>
+                </div>
 
-<p>
-Send authenticated Gmail email to your recipients.
-</p>
 
-</div>
+                <div class="field">
 
-<div class="secure-badge">
+                    <label>
+                        Your Gmail
+                    </label>
 
-<i class="fa-solid fa-lock"></i>
+                    <input
+                        id="gmail"
+                        name="gmail"
+                        type="email"
+                        placeholder="your@gmail.com"
+                    >
 
-Secure
+                </div>
 
-</div>
+            </div>
 
-</div>
 
+            <!-- Password + Subject -->
 
-<div class="form-grid">
+            <div class="two-fields">
 
+                <div class="field">
 
-<div class="field">
+                    <label>
+                        App Password
+                    </label>
 
-<label for="senderName">
-Sender Name
-</label>
+                    <div class="password-wrap">
 
-<input
-id="senderName"
-type="text"
-placeholder="Your name"
-autocomplete="off"
->
+                        <input
+                            id="appPassword"
+                            name="app_password"
+                            type="password"
+                            placeholder="Google App Password"
+                        >
 
-</div>
+                        <button
+                            type="button"
+                            id="togglePassword"
+                            class="eye-button"
+                            aria-label="Show password"
+                        >
+                            ◉
+                        </button>
 
+                    </div>
 
-<div class="field">
+                </div>
 
-<label for="gmail">
-Gmail Address
-</label>
 
-<input
-id="gmail"
-type="email"
-placeholder="yourname@gmail.com"
-autocomplete="off"
->
+                <div class="field">
 
-</div>
+                    <label>
+                        Email Subject
+                    </label>
 
+                    <input
+                        id="subject"
+                        name="subject"
+                        type="text"
+                        placeholder="Email subject"
+                    >
 
-<div class="field">
+                </div>
 
-<label for="appPassword">
-Google App Password
-</label>
+            </div>
 
-<input
-id="appPassword"
-type="password"
-placeholder="16-character App Password"
-autocomplete="new-password"
->
 
-</div>
+            <!-- Message body -->
 
+            <div class="message-header">
 
-<div class="field">
+                <label>
+                    Message Body
+                </label>
 
-<label for="subject">
-Subject
-</label>
+                <div class="mode-buttons">
 
-<input
-id="subject"
-type="text"
-placeholder="Email subject"
-autocomplete="off"
->
+                    <button
+                        type="button"
+                        id="plainMode"
+                        class="mode active"
+                    >
+                        Plain Text
+                    </button>
 
-</div>
+                    <button
+                        type="button"
+                        id="htmlMode"
+                        class="mode"
+                    >
+                        HTML
+                    </button>
 
+                </div>
 
-</div>
+            </div>
 
 
-<div class="field">
+            <textarea
+                id="messageBody"
+                name="body"
+                class="message-body"
+                placeholder=""
+            ></textarea>
 
-<div class="label-row">
 
-<label>
-Message
-</label>
+            <!-- Spintax -->
 
-<div class="mode-buttons">
+            <div class="info-box">
 
-<button
-type="button"
-id="plainButton"
-class="mode-button active"
-onclick="setMode(false)"
->
-Plain
-</button>
+                <div class="info-icon">
+                    ⤨
+                </div>
 
-<button
-type="button"
-id="htmlButton"
-class="mode-button"
-onclick="setMode(true)"
->
-HTML
-</button>
+                <div>
 
-</div>
+                    <strong>
+                        Spintax Enabled
+                    </strong>
 
-</div>
+                    <small>
+                        Spintax is always ON.
+                    </small>
 
+                </div>
 
-<textarea
-id="messageBody"
-rows="12"
-placeholder="Write your message here..."
-></textarea>
+            </div>
 
-</div>
 
+            <!-- Spam protection -->
 
-<div class="spintax-info">
+            <div class="protection-title">
+                ◈ Spam Protection
+            </div>
 
-<i class="fa-solid fa-wand-magic-sparkles"></i>
+            <div class="turnstile-box">
 
-Supports personalization such as
-<code>{{name}}</code>,
-<code>{{email}}</code>
-and simple
-<code>{Hello|Hi}</code>
-variation.
+                <div class="turnstile-check">
+                    ✓
+                </div>
 
-</div>
+                <div class="turnstile-text">
 
+                    <strong>
+                        Success!
+                    </strong>
 
-<div class="security-section">
+                </div>
 
+                <div class="cloudflare">
 
-<div class="security-heading">
+                    <strong>
+                        CLOUDFLARE
+                    </strong>
 
-<i class="fa-solid fa-shield-halved"></i>
+                    <small>
+                        Privacy · Help
+                    </small>
 
-<div>
+                </div>
 
-<strong>
-Security Verification
-</strong>
+            </div>
 
-<span>
-Complete Cloudflare verification before sending.
-</span>
+        </section>
 
-</div>
 
-</div>
+        <!-- =================================================
+             RIGHT COLUMN
+        ================================================== -->
 
+        <section class="right-column">
 
-<div
-class="turnstile-wrap"
->
 
-{% if turnstile_site_key %}
+            <!-- Recipients -->
 
-<div
-class="cf-turnstile"
-data-sitekey="{{ turnstile_site_key }}"
-data-callback="turnstileCompleted"
-data-expired-callback="turnstileExpired"
-data-error-callback="turnstileError"
-></div>
+            <div class="card recipients-card">
 
-{% else %}
+                <div class="card-title recipients-title">
 
-<div class="security-warning">
+                    <div>
+                        <span>♣</span>
+                        <strong>Recipients</strong>
+                    </div>
 
-<i class="fa-solid fa-triangle-exclamation"></i>
+                    <span
+                        id="recipientCount"
+                        class="count-badge"
+                    >
+                        0 found
+                    </span>
 
-Turnstile is not configured.
+                </div>
 
-</div>
+                <div class="helper">
+                    Paste emails (comma separated,
+                    new lines, or Excel copy)
+                </div>
 
-{% endif %}
+                <textarea
+                    id="recipients"
+                    class="recipients-box"
+                    placeholder=""
+                ></textarea>
 
-</div>
+            </div>
 
 
-</div>
+            <!-- Progress -->
 
+            <div class="card progress-card">
 
-<div class="field">
+                <div class="card-title">
+                    <span>◕</span>
+                    <strong>Progress Monitor</strong>
+                </div>
 
-<div class="label-row">
 
-<label for="recipients">
-Recipients
-</label>
+                <div class="stats-grid">
 
-<span
-id="recipientCount"
-class="recipient-count"
->
-0 / 25
-</span>
+                    <div class="stat">
 
-</div>
+                        <span class="stat-label">
+                            TOTAL
+                        </span>
 
+                        <strong
+                            id="totalCount"
+                            class="stat-value blue"
+                        >
+                            0
+                        </strong>
 
-<textarea
-id="recipients"
-rows="7"
-placeholder="one@example.com&#10;two@example.com"
-></textarea>
+                    </div>
 
 
-<div class="field-help">
+                    <div class="stat">
 
-Separate addresses with new lines, commas or semicolons.
+                        <span class="stat-label">
+                            SENT
+                        </span>
 
-</div>
+                        <strong
+                            id="sentCount"
+                            class="stat-value green"
+                        >
+                            0
+                        </strong>
 
-</div>
+                    </div>
 
 
-<div class="progress-section">
+                    <div class="stat">
 
+                        <span class="stat-label">
+                            FAILED
+                        </span>
 
-<div class="progress-stats">
+                        <strong
+                            id="failedCount"
+                            class="stat-value red"
+                        >
+                            0
+                        </strong>
 
-<div class="stat-box">
+                    </div>
 
-<span>
-Total
-</span>
 
-<strong id="totalCount">
-0
-</strong>
+                    <div class="stat">
 
-</div>
+                        <span class="stat-label">
+                            REMAINING
+                        </span>
 
+                        <strong
+                            id="remainingCount"
+                            class="stat-value orange"
+                        >
+                            0
+                        </strong>
 
-<div class="stat-box">
+                    </div>
 
-<span>
-Sent
-</span>
+                </div>
 
-<strong id="sentCount">
-0
-</strong>
 
-</div>
+                <div class="progress-track">
 
+                    <div
+                        id="progressBar"
+                        class="progress-bar"
+                    ></div>
 
-<div class="stat-box">
+                </div>
 
-<span>
-Failed
-</span>
 
-<strong id="failedCount">
-0
-</strong>
+                <div
+                    id="statusText"
+                    class="status-text"
+                >
+                    Ready to send
+                </div>
 
-</div>
 
+                <div class="action-row">
 
-<div class="stat-box">
+                    <button
+                        id="sendButton"
+                        type="button"
+                        class="send-button"
+                    >
+                        ➤ Send All
+                    </button>
 
-<span>
-Remaining
-</span>
+                    <button
+                        id="stopButton"
+                        type="button"
+                        class="stop-button"
+                        disabled
+                    >
+                        ■ Stop Sending
+                    </button>
 
-<strong id="remainingCount">
-0
-</strong>
+                </div>
 
-</div>
+            </div>
 
-</div>
+        </section>
 
-
-<div class="progress-track">
-
-<div
-id="progressBar"
-class="progress-bar"
-style="width:0%"
-></div>
-
-</div>
-
-
-<div
-id="progressStatus"
-class="progress-status"
->
-Ready
-</div>
-
-
-</div>
-
-
-<div class="action-row">
-
-
-<button
-type="button"
-id="sendButton"
-class="send-button"
-onclick="sendBatch()"
->
-
-<i class="fa-solid fa-paper-plane"></i>
-
-Send Emails
-
-</button>
-
-
-<button
-type="button"
-id="stopButton"
-class="stop-button"
-onclick="stopSending()"
-disabled
->
-
-<i class="fa-solid fa-stop"></i>
-
-Stop
-
-</button>
-
-
-</div>
-
-
-</section>
-
-</main>
-
-
-<div
-id="completionModal"
-class="modal"
->
-
-<div class="modal-card">
-
-<div class="modal-icon">
-
-<i class="fa-solid fa-circle-check"></i>
-
-</div>
-
-<h2>
-YATENDRA ❤️
-</h2>
-
-<p>
-Email processing has completed.
-</p>
-
-<button
-type="button"
-onclick="closeModal()"
->
-Close
-</button>
-
-</div>
+    </main>
 
 </div>
 
 
-<div
-id="toast"
-class="toast"
-></div>
-
+<!-- =========================================================
+     JAVASCRIPT
+========================================================== -->
 
 <script>
 
-let isHTML = false;
-let turnstileToken = "";
-let abortController = null;
-let sending = false;
+(function () {
 
+    const senderName =
+        document.getElementById("senderName");
 
-const senderName =
-document.getElementById("senderName");
+    const gmail =
+        document.getElementById("gmail");
 
-const gmail =
-document.getElementById("gmail");
+    const appPassword =
+        document.getElementById("appPassword");
 
-const appPassword =
-document.getElementById("appPassword");
+    const subject =
+        document.getElementById("subject");
 
-const subject =
-document.getElementById("subject");
-
-const messageBody =
-document.getElementById("messageBody");
-
-const recipientsInput =
-document.getElementById("recipients");
-
-const recipientCount =
-document.getElementById("recipientCount");
-
-const totalCount =
-document.getElementById("totalCount");
-
-const sentCount =
-document.getElementById("sentCount");
-
-const failedCount =
-document.getElementById("failedCount");
-
-const remainingCount =
-document.getElementById("remainingCount");
-
-const progressBar =
-document.getElementById("progressBar");
-
-const progressStatus =
-document.getElementById("progressStatus");
-
-const sendButton =
-document.getElementById("sendButton");
-
-const stopButton =
-document.getElementById("stopButton");
-
-
-function showToast(message) {
-
-    const toast =
-        document.getElementById("toast");
-
-    toast.textContent = message;
-    toast.classList.add("show");
-
-    setTimeout(
-        () => toast.classList.remove("show"),
-        3500
-    );
-}
-
-
-function setMode(html) {
-
-    isHTML = html;
-
-    document
-        .getElementById("plainButton")
-        .classList.toggle(
-            "active",
-            !html
-        );
-
-    document
-        .getElementById("htmlButton")
-        .classList.toggle(
-            "active",
-            html
-        );
-}
-
-
-function parseRecipients() {
-
-    const value =
-        recipientsInput.value || "";
-
-    const items =
-        value
-            .split(/[\s,;]+/)
-            .map(x => x.trim().toLowerCase())
-            .filter(Boolean);
-
-    const unique = [];
-
-    const seen = new Set();
-
-    for (const item of items) {
-
-        if (seen.has(item)) {
-            continue;
-        }
-
-        seen.add(item);
-        unique.push(item);
-
-        if (unique.length >= 25) {
-            break;
-        }
-    }
-
-    return unique;
-}
-
-
-function updateRecipientCount() {
-
-    const count =
-        parseRecipients().length;
-
-    recipientCount.textContent =
-        `${count} / 25`;
-}
-
-
-recipientsInput.addEventListener(
-    "input",
-    updateRecipientCount
-);
-
-
-function turnstileCompleted(token) {
-
-    turnstileToken =
-        token || "";
-
-}
-
-
-function turnstileExpired() {
-
-    turnstileToken = "";
-
-    showToast(
-        "Security verification expired. Please verify again."
-    );
-
-}
-
-
-function turnstileError() {
-
-    turnstileToken = "";
-
-    showToast(
-        "Cloudflare verification failed."
-    );
-
-}
-
-
-function resetProgress() {
-
-    totalCount.textContent = "0";
-    sentCount.textContent = "0";
-    failedCount.textContent = "0";
-    remainingCount.textContent = "0";
-
-    progressBar.style.width = "0%";
-
-    progressStatus.textContent =
-        "Ready";
-}
-
-
-function setSendingState(value) {
-
-    sending = value;
-
-    sendButton.disabled = value;
-    stopButton.disabled = !value;
-
-}
-
-
-function stopSending() {
-
-    if (
-        abortController &&
-        sending
-    ) {
-
-        abortController.abort();
-
-        progressStatus.textContent =
-            "Stopping...";
-
-    }
-
-}
-
-
-function closeModal() {
-
-    document
-        .getElementById("completionModal")
-        .classList.remove("show");
-
-}
-
-
-function showCompletion() {
-
-    document
-        .getElementById("completionModal")
-        .classList.add("show");
-
-}
-
-
-async function sendBatch() {
-
-    if (sending) {
-        return;
-    }
-
+    const messageBody =
+        document.getElementById("messageBody");
 
     const recipients =
-        parseRecipients();
+        document.getElementById("recipients");
+
+    const recipientCount =
+        document.getElementById("recipientCount");
+
+    const totalCount =
+        document.getElementById("totalCount");
+
+    const sentCount =
+        document.getElementById("sentCount");
+
+    const failedCount =
+        document.getElementById("failedCount");
+
+    const remainingCount =
+        document.getElementById("remainingCount");
+
+    const progressBar =
+        document.getElementById("progressBar");
+
+    const statusText =
+        document.getElementById("statusText");
+
+    const sendButton =
+        document.getElementById("sendButton");
+
+    const stopButton =
+        document.getElementById("stopButton");
+
+    const togglePassword =
+        document.getElementById("togglePassword");
+
+    const plainMode =
+        document.getElementById("plainMode");
+
+    const htmlMode =
+        document.getElementById("htmlMode");
 
 
-    if (!senderName.value.trim()) {
-
-        showToast(
-            "Sender Name is required."
-        );
-
-        senderName.focus();
-
-        return;
-    }
+    let htmlEnabled = false;
+    let stopRequested = false;
 
 
-    if (!gmail.value.trim()) {
+    // ========================================================
+    // Password visibility
+    // ========================================================
 
-        showToast(
-            "Gmail address is required."
-        );
+    togglePassword.addEventListener(
+        "click",
+        function () {
 
-        gmail.focus();
+            if (
+                appPassword.type === "password"
+            ) {
 
-        return;
-    }
+                appPassword.type = "text";
 
+                togglePassword.textContent = "◉";
 
-    if (!appPassword.value.trim()) {
+            } else {
 
-        showToast(
-            "Google App Password is required."
-        );
+                appPassword.type = "password";
 
-        appPassword.focus();
+                togglePassword.textContent = "◉";
+            }
 
-        return;
-    }
-
-
-    if (!subject.value.trim()) {
-
-        showToast(
-            "Subject is required."
-        );
-
-        subject.focus();
-
-        return;
-    }
+        }
+    );
 
 
-    if (!messageBody.value.trim()) {
+    // ========================================================
+    // Message mode
+    // ========================================================
 
-        showToast(
-            "Message body is required."
-        );
+    plainMode.addEventListener(
+        "click",
+        function () {
 
-        messageBody.focus();
+            htmlEnabled = false;
 
-        return;
-    }
+            plainMode.classList.add("active");
 
+            htmlMode.classList.remove("active");
 
-    if (!recipients.length) {
-
-        showToast(
-            "Add at least one valid recipient."
-        );
-
-        recipientsInput.focus();
-
-        return;
-    }
+        }
+    );
 
 
-    if (!turnstileToken) {
+    htmlMode.addEventListener(
+        "click",
+        function () {
 
-        showToast(
-            "Please complete Cloudflare verification."
-        );
+            htmlEnabled = true;
 
-        return;
-    }
+            htmlMode.classList.add("active");
 
+            plainMode.classList.remove("active");
 
-    resetProgress();
-
-    totalCount.textContent =
-        recipients.length;
-
-    remainingCount.textContent =
-        recipients.length;
+        }
+    );
 
 
-    setSendingState(true);
+    // ========================================================
+    // Recipient parser
+    // ========================================================
 
-    progressStatus.textContent =
-        "Starting...";
+    function getRecipients() {
 
+        const raw =
+            recipients.value || "";
 
-    abortController =
-        new AbortController();
+        const parts =
+            raw.split(/[\s,;]+/);
 
+        const seen = new Set();
 
-    try {
+        const result = [];
 
-        const response =
-            await fetch(
-                "/send-batch",
-                {
-                    method: "POST",
+        const emailRegex =
+            /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
+        parts.forEach(
+            function (item) {
 
-                    body: JSON.stringify({
+                const email =
+                    item.trim().toLowerCase();
 
-                        sender_name:
-                            senderName.value.trim(),
-
-                        gmail:
-                            gmail.value.trim(),
-
-                        app_password:
-                            appPassword.value.trim(),
-
-                        subject:
-                            subject.value.trim(),
-
-                        body:
-                            messageBody.value,
-
-                        is_html:
-                            isHTML,
-
-                        recipients:
-                            recipients,
-
-                        turnstile_token:
-                            turnstileToken
-
-                    }),
-
-                    signal:
-                        abortController.signal
+                if (!email) {
+                    return;
                 }
+
+                if (!emailRegex.test(email)) {
+                    return;
+                }
+
+                if (seen.has(email)) {
+                    return;
+                }
+
+                seen.add(email);
+
+                result.push(email);
+
+            }
+        );
+
+        return result.slice(0, 25);
+    }
+
+
+    function updateRecipientCount() {
+
+        const list =
+            getRecipients();
+
+        recipientCount.textContent =
+            list.length + " found";
+
+    }
+
+
+    recipients.addEventListener(
+        "input",
+        updateRecipientCount
+    );
+
+
+    // ========================================================
+    // Stats
+    // ========================================================
+
+    function setStats(
+        total,
+        sent,
+        failed,
+        remaining
+    ) {
+
+        totalCount.textContent =
+            total;
+
+        sentCount.textContent =
+            sent;
+
+        failedCount.textContent =
+            failed;
+
+        remainingCount.textContent =
+            remaining;
+
+        let percent = 0;
+
+        if (total > 0) {
+
+            const completed =
+                sent + failed;
+
+            percent =
+                Math.round(
+                    (completed / total) * 100
+                );
+
+        }
+
+        progressBar.style.width =
+            percent + "%";
+    }
+
+
+    // ========================================================
+    // Send
+    // ========================================================
+
+    sendButton.addEventListener(
+        "click",
+        async function () {
+
+            stopRequested = false;
+
+            const list =
+                getRecipients();
+
+            if (!senderName.value.trim()) {
+
+                alert(
+                    "Please enter Sender Name."
+                );
+
+                return;
+            }
+
+            if (!gmail.value.trim()) {
+
+                alert(
+                    "Please enter your Gmail address."
+                );
+
+                return;
+            }
+
+            if (!appPassword.value.trim()) {
+
+                alert(
+                    "Please enter Google App Password."
+                );
+
+                return;
+            }
+
+            if (!subject.value.trim()) {
+
+                alert(
+                    "Please enter Email Subject."
+                );
+
+                return;
+            }
+
+            if (!messageBody.value.trim()) {
+
+                alert(
+                    "Please enter Message Body."
+                );
+
+                return;
+            }
+
+            if (list.length === 0) {
+
+                alert(
+                    "Please add at least one valid recipient."
+                );
+
+                return;
+            }
+
+
+            // ------------------------------------------------
+            // UI state
+            // ------------------------------------------------
+
+            sendButton.disabled = true;
+
+            stopButton.disabled = false;
+
+            statusText.textContent =
+                "Sending...";
+
+
+            setStats(
+                list.length,
+                0,
+                0,
+                list.length
             );
 
 
-        if (!response.ok) {
+            // ------------------------------------------------
+            // FormData
+            // ------------------------------------------------
 
-            let errorText =
-                "Unable to start sending.";
+            const formData =
+                new FormData();
+
+            formData.append(
+                "sender_name",
+                senderName.value.trim()
+            );
+
+            formData.append(
+                "gmail",
+                gmail.value.trim()
+            );
+
+            formData.append(
+                "app_password",
+                appPassword.value.trim()
+            );
+
+            formData.append(
+                "subject",
+                subject.value.trim()
+            );
+
+            formData.append(
+                "body",
+                messageBody.value
+            );
+
+            formData.append(
+                "recipients",
+                list.join("\n")
+            );
+
+            formData.append(
+                "is_html",
+                htmlEnabled
+                    ? "true"
+                    : "false"
+            );
+
 
             try {
 
-                const errorData =
-                    await response.json();
-
-                errorText =
-                    errorData.error ||
-                    errorText;
-
-            } catch (_) {}
-
-            throw new Error(errorText);
-        }
+                const response =
+                    await fetch(
+                        "/send-batch",
+                        {
+                            method: "POST",
+                            body: formData,
+                        }
+                    );
 
 
-        if (!response.body) {
-            throw new Error(
-                "Streaming response is unavailable."
-            );
-        }
+                if (!response.ok) {
 
+                    let errorMessage =
+                        "Unable to send.";
 
-        const reader =
-            response.body.getReader();
+                    try {
 
-        const decoder =
-            new TextDecoder();
+                        const data =
+                            await response.json();
 
-        let buffer = "";
+                        errorMessage =
+                            data.message ||
+                            errorMessage;
 
+                    } catch (_) {}
 
-        while (true) {
-
-            const {
-                value,
-                done
-            } =
-                await reader.read();
-
-
-            if (done) {
-                break;
-            }
-
-
-            buffer +=
-                decoder.decode(
-                    value,
-                    { stream: true }
-                );
-
-
-            const lines =
-                buffer.split("\n");
-
-            buffer =
-                lines.pop() || "";
-
-
-            for (const line of lines) {
-
-                if (!line.trim()) {
-                    continue;
+                    throw new Error(
+                        errorMessage
+                    );
                 }
 
 
-                let event;
+                // ------------------------------------------------
+                // Read NDJSON stream
+                // ------------------------------------------------
 
-                try {
+                const reader =
+                    response.body.getReader();
 
-                    event =
-                        JSON.parse(line);
+                const decoder =
+                    new TextDecoder();
 
-                } catch (_) {
-
-                    continue;
-
-                }
-
-
-                if (
-                    event.type ===
-                    "start"
-                ) {
-
-                    totalCount.textContent =
-                        event.total;
-
-                    sentCount.textContent =
-                        event.sent;
-
-                    failedCount.textContent =
-                        event.failed;
-
-                    remainingCount.textContent =
-                        event.remaining;
-
-                    progressStatus.textContent =
-                        "Sending...";
-
-                }
+                let buffer = "";
 
 
-                else if (
-                    event.type ===
-                    "progress"
-                ) {
+                while (true) {
 
-                    sentCount.textContent =
-                        event.sent;
+                    if (stopRequested) {
+                        break;
+                    }
 
-                    failedCount.textContent =
-                        event.failed;
+                    const {
+                        value,
+                        done
+                    } =
+                        await reader.read();
 
-                    remainingCount.textContent =
-                        event.remaining;
+                    if (done) {
+                        break;
+                    }
 
-
-                    const completed =
-                        event.completed || 0;
-
-                    const total =
-                        event.total || 1;
-
-
-                    const percent =
-                        Math.round(
-                            completed /
-                            total *
-                            100
+                    buffer +=
+                        decoder.decode(
+                            value,
+                            {
+                                stream: true
+                            }
                         );
 
 
-                    progressBar.style.width =
-                        `${percent}%`;
+                    const lines =
+                        buffer.split("\n");
+
+                    buffer =
+                        lines.pop();
 
 
-                    progressStatus.textContent =
-                        `${completed} / ${total} processed`;
+                    for (
+                        const line of lines
+                    ) {
+
+                        if (!line.trim()) {
+                            continue;
+                        }
+
+                        let data;
+
+                        try {
+
+                            data =
+                                JSON.parse(
+                                    line
+                                );
+
+                        } catch (_) {
+                            continue;
+                        }
+
+
+                        if (
+                            data.type ===
+                            "start"
+                        ) {
+
+                            setStats(
+                                data.total,
+                                0,
+                                0,
+                                data.total
+                            );
+
+                            statusText.textContent =
+                                "Sending...";
+
+                        }
+
+
+                        if (
+                            data.type ===
+                            "progress"
+                        ) {
+
+                            setStats(
+                                data.total,
+                                data.sent,
+                                data.failed,
+                                data.remaining
+                            );
+
+                            statusText.textContent =
+                                "Sending " +
+                                data.completed +
+                                " / " +
+                                data.total;
+
+                        }
+
+
+                        if (
+                            data.type ===
+                            "complete"
+                        ) {
+
+                            setStats(
+                                data.total,
+                                data.sent,
+                                data.failed,
+                                0
+                            );
+
+                            statusText.textContent =
+                                "Completed";
+
+
+                            if (
+                                data.failed === 0
+                            ) {
+
+                                alert(
+                                    "YATENDRA❤️"
+                                );
+
+                            } else {
+
+                                alert(
+                                    "Completed: " +
+                                    data.sent +
+                                    " sent, " +
+                                    data.failed +
+                                    " failed."
+                                );
+                            }
+
+                        }
+
+                    }
 
                 }
 
+            } catch (error) {
 
-                else if (
-                    event.type ===
-                    "complete"
-                ) {
+                statusText.textContent =
+                    "Send failed";
 
-                    sentCount.textContent =
-                        event.sent;
+                alert(
+                    error.message ||
+                    "Network error."
+                );
 
-                    failedCount.textContent =
-                        event.failed;
+            } finally {
 
-                    remainingCount.textContent =
-                        event.remaining;
+                sendButton.disabled = false;
 
-                    progressBar.style.width =
-                        "100%";
-
-                    progressStatus.textContent =
-                        `Complete — ${event.sent} sent, ${event.failed} failed`;
-
-                    showCompletion();
-
-                }
-
-
-                else if (
-                    event.type ===
-                    "error"
-                ) {
-
-                    showToast(
-                        event.message ||
-                        "Sending error."
-                    );
-
-                }
+                stopButton.disabled = true;
 
             }
 
         }
+    );
 
-    }
 
+    // ========================================================
+    // Stop
+    // ========================================================
 
-    catch (error) {
+    stopButton.addEventListener(
+        "click",
+        function () {
 
-        if (
-            error.name ===
-            "AbortError"
-        ) {
+            stopRequested = true;
 
-            progressStatus.textContent =
-                "Stopped.";
+            statusText.textContent =
+                "Stopping...";
 
-            showToast(
-                "Sending stopped."
-            );
-
-        } else {
-
-            progressStatus.textContent =
-                "Error.";
-
-            showToast(
-                error.message ||
-                "Network error."
-            );
+            stopButton.disabled = true;
 
         }
-
-    }
-
-
-    finally {
-
-        setSendingState(false);
-
-        abortController = null;
-
-    }
-
-}
+    );
 
 
-window.addEventListener(
-    "load",
-    () => {
+    // Initial
+    updateRecipientCount();
 
-        messageBody.value = "";
-
-        updateRecipientCount();
-
-    }
-);
-
-
-window.addEventListener(
-    "pageshow",
-    () => {
-
-        messageBody.value = "";
-
-    }
-);
+})();
 
 </script>
 
