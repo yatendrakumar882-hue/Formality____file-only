@@ -1,90 +1,174 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<meta charset="utf-8">
 
-    <title>Secure Login</title>
+<meta
+name="viewport"
+content="width=device-width, initial-scale=1"
+>
 
-    <link
-        rel="stylesheet"
-        href="{{ url_for('static', filename='style.css') }}"
-    >
+<title>
+Secure Mail Console - Login
+</title>
 
-    {% if turnstile_site_key %}
-    <script
-        src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-        async
-        defer
-    ></script>
-    {% endif %}
+<link
+rel="stylesheet"
+href="{{ url_for('static', filename='style.css') }}"
+>
+
+<link
+rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+>
+
 </head>
+
 
 <body class="login-page">
 
-<div class="login-shell">
 
-    <div class="login-card">
+<div class="login-card">
 
-        <div class="brand-mark">
-            ✉
-        </div>
 
-        <h1>Secure Email Console</h1>
+<div class="login-logo">
 
-        <p class="muted">
-            Sign in to continue.
-        </p>
-
-        {% if error %}
-        <div class="alert error">
-            {{ error }}
-        </div>
-        {% endif %}
-
-        <form
-            method="POST"
-            action="{{ url_for('login') }}"
-        >
-
-            <label for="password">
-                Password
-            </label>
-
-            <input
-                id="password"
-                name="password"
-                type="password"
-                placeholder="Enter password"
-                autocomplete="current-password"
-                required
-            >
-
-            {% if turnstile_site_key %}
-            <div class="turnstile-box">
-                <div
-                    class="cf-turnstile"
-                    data-sitekey="{{ turnstile_site_key }}"
-                ></div>
-            </div>
-            {% endif %}
-
-            <button
-                type="submit"
-                class="primary-button"
-            >
-                Sign In
-            </button>
-
-        </form>
-
-    </div>
+<i class="fa-solid fa-shield-halved"></i>
 
 </div>
+
+
+<h1>
+Secure Mail Console
+</h1>
+
+
+<p class="login-subtitle">
+Sign in to continue
+</p>
+
+
+<form
+method="post"
+autocomplete="off"
+>
+
+
+<label>
+Password
+</label>
+
+
+<div class="login-password">
+
+<input
+id="password"
+name="password"
+type="password"
+placeholder="Enter password"
+autocomplete="new-password"
+required
+autofocus
+>
+
+
+<button
+type="button"
+id="showPassword"
+>
+
+<i class="fa-regular fa-eye"></i>
+
+</button>
+
+</div>
+
+
+{% if error %}
+
+<div class="login-error">
+
+<i class="fa-solid fa-circle-exclamation"></i>
+
+{{ error }}
+
+</div>
+
+{% endif %}
+
+
+<button
+type="submit"
+class="login-button"
+>
+
+<i class="fa-solid fa-right-to-bracket"></i>
+
+Login
+
+</button>
+
+
+</form>
+
+
+<div class="login-footer">
+
+<i class="fa-solid fa-shield-halved"></i>
+
+Secure Mail Console
+
+</div>
+
+
+</div>
+
+
+<script>
+
+const password =
+document.getElementById(
+    "password"
+);
+
+
+const button =
+document.getElementById(
+    "showPassword"
+);
+
+
+button.addEventListener(
+    "click",
+    function() {
+
+        if (
+            password.type ===
+            "password"
+        ) {
+
+            password.type =
+                "text";
+
+            this.innerHTML =
+                '<i class="fa-regular fa-eye-slash"></i>';
+
+        } else {
+
+            password.type =
+                "password";
+
+            this.innerHTML =
+                '<i class="fa-regular fa-eye"></i>';
+
+        }
+
+    }
+);
+
+</script>
 
 </body>
 </html>
