@@ -1,4 +1,4 @@
-import os, re, ssl, json, hmac, html, time, smtplib, urllib.parse, urllib.request
+import os, re, ssl, json, hmac, html, time, smtplib
 from pathlib import Path
 from datetime import timedelta
 from email.message import EmailMessage
@@ -12,8 +12,6 @@ handler = app
 
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
 LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "").strip()
-TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "").strip()
-TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "").strip()
 if len(SESSION_SECRET) < 32:
     raise RuntimeError("Set SESSION_SECRET to a random value of at least 32 characters.")
 if not LOGIN_PASSWORD:
@@ -27,10 +25,10 @@ app.config.update(SESSION_COOKIE_SECURE=True, SESSION_COOKIE_HTTPONLY=True,
 SMTP_HOST, SMTP_PORT, SMTP_TIMEOUT = "smtp.gmail.com", 465, 20
 MAX_RECIPIENTS = 25
 SEND_DELAY_SECONDS = 0
-EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+$")
+EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$")
 
 def clean(value, limit=250):
-    return str(value or "").replace("\\r", " ").replace("\\n", " ").strip()[:limit]
+    return str(value or "").replace("\r", " ").replace("\n", " ").strip()[:limit]
 
 def valid_email(value):
     return isinstance(value, str) and len(value.strip()) <= 254 and bool(EMAIL_RE.fullmatch(value.strip()))
@@ -42,27 +40,7 @@ def error(message, status=400):
     return jsonify({"success": False, "message": message}), status
 
 def event_line(data):
-    return json.dumps(data, ensure_ascii=False) + "\\n"
-
-def verify_turnstile(token, remote_ip=None):
-    if not TURNSTILE_SECRET_KEY:
-        return False, "TURNSTILE_SECRET_KEY is not configured."
-    if not token:
-        return False, "Complete Cloudflare verification first."
-    fields = {"secret": TURNSTILE_SECRET_KEY, "response": token}
-    if remote_ip:
-        fields["remoteip"] = remote_ip
-    req = urllib.request.Request(
-        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-        data=urllib.parse.urlencode(fields).encode(),
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=8) as response:
-            result = json.loads(response.read().decode("utf-8"))
-        return (True, None) if result.get("success") is True else (False, "Verification failed. Refresh and try again.")
-    except Exception:
-        return False, "Verification service unavailable. Please try again."
+    return json.dumps(data, ensure_ascii=False) + "\n"
 
 def html_to_text(value):
     value = re.sub(r"(?i)<\\s*br\\s*/?\\s*>", "\\n", value)
@@ -130,7 +108,7 @@ def logout():
 def home():
     if not logged_in():
         return redirect(url_for("login"))
-    return render_template("index.html", turnstile_site_key=TURNSTILE_SITE_KEY)
+    return render_template("index.html")
 
 @app.route("/health")
 def health():
@@ -181,35 +159,30 @@ def send_batch():
         return error("No valid recipients found.")
     if len(recipients) > MAX_RECIPIENTS:
         return error(f"Maximum {MAX_RECIPIENTS} unique recipients per batch.")
-    verified, reason = verify_turnstile(str(data.get("turnstile_token", "")).strip(), request.remote_addr)
-    if not verified:
-        return error(reason or "Verification failed.", 403)
 
     def generate():
         total, sent, failed = len(recipients), 0, 0
         yield event_line({"type":"start","total":total,"sent":0,"failed":0,"remaining":total,"invalid_skipped":invalid})
-        for recipient in recipients:
-            try:
-                send_one(gmail, password, sender_name, subject, body, is_html, recipient)
-                sent += 1
-                item = {"type":"progress","recipient":recipient["email"],"result":"sent"}
-            except smtplib.SMTPAuthenticationError:
-                failed += 1
-                item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":"Gmail authentication failed. Check address and App Password."}
-            except smtplib.SMTPRecipientsRefused:
-                failed += 1
-                item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":"Gmail refused this recipient."}
-            except smtplib.SMTPResponseException as exc:
-                failed += 1
-                item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":f"SMTP error {exc.smtp_code}: {str(exc.smtp_error)[:200]}"}
-            except (smtplib.SMTPException, TimeoutError, OSError) as exc:
-                failed += 1
-                item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":f"SMTP/network error: {str(exc)[:200]}"}
-            except Exception:
-                failed += 1
-                item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":"Unexpected error. Check Vercel logs."}
-            item.update({"total":total,"sent":sent,"failed":failed,"remaining":total-sent-failed})
-            yield event_line(item)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=min(6, total)) as pool:
+            jobs = {pool.submit(send_one, gmail, password, sender_name, subject, body, is_html, r): r for r in recipients}
+            for future in as_completed(jobs):
+                recipient = jobs[future]
+                try:
+                    future.result(); sent += 1
+                    item = {"type":"progress","recipient":recipient["email"],"result":"sent"}
+                except smtplib.SMTPAuthenticationError:
+                    failed += 1; item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":"Gmail authentication failed. Check address and App Password."}
+                except smtplib.SMTPRecipientsRefused:
+                    failed += 1; item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":"Gmail refused this recipient."}
+                except smtplib.SMTPResponseException as exc:
+                    failed += 1; item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":f"SMTP error {exc.smtp_code}: {str(exc.smtp_error)[:200]}"}
+                except (smtplib.SMTPException, TimeoutError, OSError) as exc:
+                    failed += 1; item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":f"SMTP/network error: {str(exc)[:200]}"}
+                except Exception:
+                    failed += 1; item = {"type":"progress","recipient":recipient["email"],"result":"failed","error":"Unexpected error. Check Vercel logs."}
+                item.update({"total":total,"sent":sent,"failed":failed,"remaining":total-sent-failed})
+                yield event_line(item)
         yield event_line({"type":"complete","success":failed==0,"message":"Sending attempt finished. SMTP acceptance does not prove Inbox delivery.","total":total,"sent":sent,"failed":failed,"remaining":0})
 
     response = Response(generate(), content_type="application/x-ndjson; charset=utf-8")
