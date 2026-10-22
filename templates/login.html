@@ -1,79 +1,8 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Secure Mail Console</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-{% if turnstile_site_key %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
-</head>
-<body>
-<header class="topbar"><div><div class="eyebrow">MAIL OPERATIONS</div><h1>Secure Mail Console</h1></div><form action="{{ url_for('logout') }}" method="post"><button class="btn secondary">Log out</button></form></header>
-<main class="layout">
-<section class="panel">
-<div class="panel-head"><div><div class="eyebrow">MESSAGE BUILDER</div><h2>Compose email</h2></div><span class="pill">Gmail SMTP</span></div>
-<form id="sendForm">
-<label>Sender name<input id="senderName" required placeholder="Your name or business"></label>
-<label>Gmail address<input id="gmail" type="email" required placeholder="you@gmail.com"></label>
-<label>Gmail App Password<input id="appPassword" type="password" required autocomplete="new-password"></label>
-<label>Subject<input id="subject" required maxlength="250" placeholder="Email subject"></label>
-<label>Message body<textarea id="body" rows="9" required placeholder="Write your message. You can use {{name}} and {{email}}."></textarea></label>
-<label class="check"><input id="isHtml" type="checkbox"> Message body is HTML</label>
-<label>Recipients <span class="muted">(one email per line; max 25)</span><textarea id="recipients" rows="6" required placeholder="person@example.com&#10;another@example.com"></textarea></label>
-<label class="check"><input id="consent" type="checkbox" required> I confirm these recipients have permission to receive this message.</label>
-{% if turnstile_site_key %}<div class="captcha"><div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light"></div></div>{% else %}<p class="notice">Cloudflare verification is not configured. Sending is blocked until configured.</p>{% endif %}
-<div class="actions"><button id="sendBtn" class="btn primary" type="submit">Send All</button><button id="stopBtn" class="btn secondary" type="button" disabled>Stop UI Updates</button></div>
-<p id="status" class="status" role="status">Ready to send.</p>
-</form></section>
-<section class="panel">
-<div class="panel-head"><div><div class="eyebrow">LIVE STATUS</div><h2>Progress monitor</h2></div><span id="statePill" class="pill">Ready</span></div>
-<div class="stats"><div class="stat"><span>Total</span><strong id="total">0</strong></div><div class="stat"><span>Sent</span><strong id="sent">0</strong></div><div class="stat"><span>Failed</span><strong id="failed">0</strong></div><div class="stat"><span>Remaining</span><strong id="remaining">0</strong></div></div>
-<div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><h3>Activity log</h3>
-<div id="log" class="log" aria-live="polite"><p class="muted">Sending results will appear here.</p></div>
-<p class="footnote">Sent means Gmail accepted the message for sending; it does not confirm Inbox delivery.</p>
-</section></main>
-<script>
-(() => {
-const $ = id => document.getElementById(id);
-let controller = null, stopUi = false;
-function logLine(message, kind="") { const p=document.createElement("p"); p.className=kind; p.textContent=message; $("log").prepend(p); }
-function updateCounts(e) {
-  ["total","sent","failed","remaining"].forEach(k=>{if(e[k]!==undefined) $(k).textContent=e[k];});
-  const total=Number($("total").textContent)||0, done=(Number($("sent").textContent)||0)+(Number($("failed").textContent)||0);
-  $("progressBar").style.width=(total?Math.min(100,done/total*100):0)+"%";
-}
-function handleEvent(e) {
-  if(stopUi)return; updateCounts(e);
-  if(e.type==="start"){ $("statePill").textContent="Sending"; $("status").textContent="Sending started."; logLine(`Started ${e.total} recipient(s).`); }
-  else if(e.type==="progress"){const ok=e.result==="sent";logLine(`${ok?"Accepted by Gmail":"Failed"}: ${e.recipient||"Recipient"}${e.error?" — "+e.error:""}`,ok?"success":"failure");}
-  else if(e.type==="complete"){ $("statePill").textContent="Finished"; $("status").textContent=`Finished: ${e.sent} accepted, ${e.failed} failed.`; logLine($("status").textContent); }
-  else if(e.type==="error"){ $("status").textContent=e.message||"Sending failed."; logLine($("status").textContent,"failure");}
-}
-$("sendForm").addEventListener("submit", async ev=>{
-  ev.preventDefault(); if(controller)return;
-  const gmail=$("gmail").value.trim();
-  const lines=$("recipients").value.split(/[\n,;]+/).map(s=>s.trim()).filter(Boolean);
-  const recipients=lines.map(email=>({email}));
-  if(!gmail.toLowerCase().endsWith("@gmail.com")){$("status").textContent="Use a valid @gmail.com sender address.";return;}
-  if(!recipients.length||recipients.length>25){$("status").textContent="Enter 1–25 recipients.";return;}
-  if(!$("consent").checked){$("status").textContent="Confirm recipient permission before sending.";return;}
-  const captcha=document.querySelector('[name="cf-turnstile-response"]');
-  if(!captcha||!captcha.value){$("status").textContent="Complete Cloudflare verification first.";return;}
-  controller=new AbortController(); stopUi=false; $("sendBtn").disabled=true; $("stopBtn").disabled=false;
-  $("log").replaceChildren(); $("statePill").textContent="Connecting"; $("status").textContent="Connecting to Gmail…";
-  try {
-    const response=await fetch("/send-batch",{method:"POST",headers:{"Content-Type":"application/json"},signal:controller.signal,
-      body:JSON.stringify({sender_name:$("senderName").value.trim(),gmail,app_password:$("appPassword").value,subject:$("subject").value.trim(),body:$("body").value,is_html:$("isHtml").checked,recipients,consent_confirmed:true,turnstile_token:captcha.value})});
-    if(!response.ok){let message=`Request failed (${response.status}).`;try{const d=await response.json();message=d.message||d.error||message;}catch{}throw new Error(message);}
-    if(!response.body)throw new Error("Streaming response unavailable.");
-    const reader=response.body.getReader(), decoder=new TextDecoder(); let buffer="";
-    while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const rows=buffer.split("\n");buffer=rows.pop();for(const row of rows){if(row.trim())try{handleEvent(JSON.parse(row));}catch{}}}
-    if(buffer.trim())try{handleEvent(JSON.parse(buffer));}catch{}
-  } catch(err) {
-    $("status").textContent=err.name==="AbortError"?"Browser request cancelled; some emails may already have been sent.":(err.message||"Sending failed.");
-    logLine($("status").textContent,"failure"); $("statePill").textContent="Stopped";
-  } finally {controller=null;$("sendBtn").disabled=false;$("stopBtn").disabled=true;if(window.turnstile)window.turnstile.reset();}
-});
-$("stopBtn").addEventListener("click",()=>{stopUi=true;if(controller)controller.abort();});
-})();
-</script>
-</body></html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login | Secure Mail Console</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body class="login-page"><main class="login-card">
+<div class="eyebrow">PRIVATE ACCESS</div><h1>Secure Mail Console</h1><p class="muted">Enter your password to continue.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="{{ url_for('login') }}"><label>Login password<input type="password" name="password" required autofocus autocomplete="current-password"></label><button class="btn primary full" type="submit">Log in</button></form>
+</main></body></html>
