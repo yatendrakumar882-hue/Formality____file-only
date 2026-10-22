@@ -3,8 +3,33 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Secure Mail Console</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-{% if turnstile_site_key %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033;background:#f4f6fb;font-synthesis:none}
+*{box-sizing:border-box}body{margin:0;min-height:100vh}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:22px max(22px,calc((100vw - 1200px)/2));background:#101b35;color:white;gap:16px}
+.topbar h1{margin:3px 0 0;font-size:24px}.eyebrow{font-size:10px;letter-spacing:.16em;font-weight:800;color:#7c8ba9}.topbar .eyebrow{color:#9eadd0}
+.layout{max-width:1200px;margin:26px auto;padding:0 20px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start}.right-stack{display:grid;gap:22px}.field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}.field-grid label{min-width:0}.right-stack textarea{min-height:132px}
+.panel,.login-card{background:#fff;border:1px solid #e4e8f0;border-radius:18px;padding:24px;box-shadow:0 8px 28px #1a2a4b0b}
+.panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:22px}.panel h2{margin:5px 0 0;font-size:21px}
+.pill{font-size:12px;padding:7px 10px;border-radius:999px;background:#eef2ff;color:#3e52a1;font-weight:700}
+label{display:block;font-size:13px;font-weight:700;margin:15px 0;color:#34415a}
+input:not([type=checkbox]),textarea{display:block;width:100%;margin-top:7px;border:1px solid #d8deea;border-radius:10px;padding:12px 13px;font:inherit;font-size:14px;color:#172033;background:#fff;outline:none}
+input:focus,textarea:focus{border-color:#6579d7;box-shadow:0 0 0 3px #6579d71c}textarea{resize:vertical;line-height:1.55}
+.check{display:flex;align-items:flex-start;gap:9px;line-height:1.5}.check input{margin-top:3px}.muted{color:#778198;font-size:12px;font-weight:400}
+.btn{border:0;border-radius:10px;padding:11px 16px;font-weight:750;cursor:pointer}.btn:disabled{opacity:.5;cursor:not-allowed}
+.primary{background:#3457db;color:white}.secondary{background:#edf0f7;color:#293550}.actions{display:flex;gap:10px;margin-top:18px}.actions .btn{flex:1}
+.status,.notice{font-size:13px;line-height:1.5;color:#4b5872;background:#f5f7fc;border-radius:10px;padding:12px}
+.notice,.error{color:#a63d35;background:#fff1ef;padding:12px;border-radius:10px;font-size:13px}.captcha{margin:18px 0}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.stat{background:#f6f8fc;border:1px solid #e9edf5;padding:17px;border-radius:13px}
+.stat span{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:10px;color:#79839a;font-weight:800}.stat strong{display:block;font-size:29px;margin-top:6px}
+.progress-track{height:8px;background:#edf0f6;border-radius:99px;overflow:hidden;margin:18px 0 25px}.progress-bar{height:100%;width:0;background:#3457db;transition:width .15s}
+h3{font-size:15px}.log{height:310px;overflow:auto;border:1px solid #e7ebf3;border-radius:12px;padding:10px;background:#fbfcfe}
+.log p{font-size:12px;line-height:1.5;overflow-wrap:anywhere;border-bottom:1px solid #edf0f5;padding:7px 3px;margin:0}
+.success{color:#16805d}.failure{color:#b53b43}.footnote{font-size:11px;line-height:1.5;color:#778198}
+.login-page{display:grid;place-items:center;padding:20px}.login-card{width:min(420px,100%)}.login-card h1{font-size:25px}.full{width:100%;margin-top:10px}
+@media(max-width:800px){.layout{grid-template-columns:1fr;margin:14px auto}.topbar{padding:18px 20px}.panel{padding:18px}.topbar h1{font-size:20px}}@media(max-width:520px){.field-grid{grid-template-columns:1fr}}
+
+</style>
 </head>
 <body>
 <header class="topbar"><div><div class="eyebrow">MAIL OPERATIONS</div><h1>Secure Mail Console</h1></div><form action="{{ url_for('logout') }}" method="post"><button class="btn secondary">Log out</button></form></header>
@@ -12,25 +37,27 @@
 <section class="panel">
 <div class="panel-head"><div><div class="eyebrow">MESSAGE BUILDER</div><h2>Compose email</h2></div><span class="pill">Gmail SMTP</span></div>
 <form id="sendForm">
-<label>Sender name<input id="senderName" required placeholder="Your name or business"></label>
-<label>Gmail address<input id="gmail" type="email" required placeholder="you@gmail.com"></label>
-<label>Gmail App Password<input id="appPassword" type="password" required autocomplete="new-password"></label>
-<label>Subject<input id="subject" required maxlength="250" placeholder="Email subject"></label>
+<div class="field-grid"><label>Sender Name<input id="senderName" required placeholder="Your name or business"></label>
+<label>Your Gmail<input id="gmail" type="email" required placeholder="you@gmail.com"></label>
+<label>App Password<input id="appPassword" type="password" required autocomplete="new-password"></label>
+<label>Email Subject<input id="subject" required maxlength="250" placeholder="Email subject"></label></div>
 <label>Message body<textarea id="body" rows="9" required placeholder="Write your message. You can use {{name}} and {{email}}."></textarea></label>
 <label class="check"><input id="isHtml" type="checkbox"> Message body is HTML</label>
-<label>Recipients <span class="muted">(one email per line; max 25)</span><textarea id="recipients" rows="6" required placeholder="person@example.com&#10;another@example.com"></textarea></label>
-<label class="check"><input id="consent" type="checkbox" required> I confirm these recipients have permission to receive this message.</label>
-{% if turnstile_site_key %}<div class="captcha"><div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light"></div></div>{% else %}<p class="notice">Cloudflare verification is not configured. Sending is blocked until configured.</p>{% endif %}
+<p class="muted">Send only to recipients who agreed to receive your email.</p>
 <div class="actions"><button id="sendBtn" class="btn primary" type="submit">Send All</button><button id="stopBtn" class="btn secondary" type="button" disabled>Stop UI Updates</button></div>
 <p id="status" class="status" role="status">Ready to send.</p>
 </form></section>
+<div class="right-stack">
+<section class="panel"><div class="panel-head"><div><h2>♟ Recipients</h2><p class="muted">Paste email addresses separated by commas or new lines</p></div><span id="recipientCount" class="pill">0 found</span></div>
+<label><textarea id="recipients" rows="6" required form="sendForm" placeholder="person@example.com&#10;another@example.com"></textarea></label>
+<label class="check"><input id="consent" type="checkbox" required form="sendForm"> I confirm these recipients agreed to receive this email.</label></section>
 <section class="panel">
 <div class="panel-head"><div><div class="eyebrow">LIVE STATUS</div><h2>Progress monitor</h2></div><span id="statePill" class="pill">Ready</span></div>
 <div class="stats"><div class="stat"><span>Total</span><strong id="total">0</strong></div><div class="stat"><span>Sent</span><strong id="sent">0</strong></div><div class="stat"><span>Failed</span><strong id="failed">0</strong></div><div class="stat"><span>Remaining</span><strong id="remaining">0</strong></div></div>
 <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><h3>Activity log</h3>
 <div id="log" class="log" aria-live="polite"><p class="muted">Sending results will appear here.</p></div>
 <p class="footnote">Sent means Gmail accepted the message for sending; it does not confirm Inbox delivery.</p>
-</section></main>
+</section></div></main>
 <script>
 (() => {
 const $ = id => document.getElementById(id);
@@ -53,16 +80,15 @@ $("sendForm").addEventListener("submit", async ev=>{
   const gmail=$("gmail").value.trim();
   const lines=$("recipients").value.split(/[\n,;]+/).map(s=>s.trim()).filter(Boolean);
   const recipients=lines.map(email=>({email}));
+  $("recipientCount").textContent=recipients.length+" found";
   if(!gmail.toLowerCase().endsWith("@gmail.com")){$("status").textContent="Use a valid @gmail.com sender address.";return;}
   if(!recipients.length||recipients.length>25){$("status").textContent="Enter 1–25 recipients.";return;}
   if(!$("consent").checked){$("status").textContent="Confirm recipient permission before sending.";return;}
-  const captcha=document.querySelector('[name="cf-turnstile-response"]');
-  if(!captcha||!captcha.value){$("status").textContent="Complete Cloudflare verification first.";return;}
-  controller=new AbortController(); stopUi=false; $("sendBtn").disabled=true; $("stopBtn").disabled=false;
+    controller=new AbortController(); stopUi=false; $("sendBtn").disabled=true; $("stopBtn").disabled=false;
   $("log").replaceChildren(); $("statePill").textContent="Connecting"; $("status").textContent="Connecting to Gmail…";
   try {
     const response=await fetch("/send-batch",{method:"POST",headers:{"Content-Type":"application/json"},signal:controller.signal,
-      body:JSON.stringify({sender_name:$("senderName").value.trim(),gmail,app_password:$("appPassword").value,subject:$("subject").value.trim(),body:$("body").value,is_html:$("isHtml").checked,recipients,consent_confirmed:true,turnstile_token:captcha.value})});
+      body:JSON.stringify({sender_name:$("senderName").value.trim(),gmail,app_password:$("appPassword").value,subject:$("subject").value.trim(),body:$("body").value,is_html:$("isHtml").checked,recipients,consent_confirmed:true})});
     if(!response.ok){let message=`Request failed (${response.status}).`;try{const d=await response.json();message=d.message||d.error||message;}catch{}throw new Error(message);}
     if(!response.body)throw new Error("Streaming response unavailable.");
     const reader=response.body.getReader(), decoder=new TextDecoder(); let buffer="";
@@ -71,7 +97,7 @@ $("sendForm").addEventListener("submit", async ev=>{
   } catch(err) {
     $("status").textContent=err.name==="AbortError"?"Browser request cancelled; some emails may already have been sent.":(err.message||"Sending failed.");
     logLine($("status").textContent,"failure"); $("statePill").textContent="Stopped";
-  } finally {controller=null;$("sendBtn").disabled=false;$("stopBtn").disabled=true;if(window.turnstile)window.turnstile.reset();}
+  } finally {controller=null;$("sendBtn").disabled=false;$("stopBtn").disabled=true;}
 });
 $("stopBtn").addEventListener("click",()=>{stopUi=true;if(controller)controller.abort();});
 })();
