@@ -1,174 +1,29 @@
+<CodeBlock language="html" editable>
 <!doctype html>
 <html lang="en">
-
 <head>
-
-<meta charset="utf-8">
-
-<meta
-name="viewport"
-content="width=device-width, initial-scale=1"
->
-
-<title>
-Secure Mail Console - Login
-</title>
-
-<link
-rel="stylesheet"
-href="{{ url_for('static', filename='style.css') }}"
->
-
-<link
-rel="stylesheet"
-href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
->
-
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Login | Secure Mail Console</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-
-
 <body class="login-page">
-
-
-<div class="login-card">
-
-
-<div class="login-logo">
-
-<i class="fa-solid fa-shield-halved"></i>
-
-</div>
-
-
-<h1>
-Secure Mail Console
-</h1>
-
-
-<p class="login-subtitle">
-Sign in to continue
-</p>
-
-
-<form
-method="post"
-autocomplete="off"
->
-
-
-<label>
-Password
-</label>
-
-
-<div class="login-password">
-
-<input
-id="password"
-name="password"
-type="password"
-placeholder="Enter password"
-autocomplete="new-password"
-required
-autofocus
->
-
-
-<button
-type="button"
-id="showPassword"
->
-
-<i class="fa-regular fa-eye"></i>
-
-</button>
-
-</div>
-
+  <main class="login-card">
+    <div class="eyebrow">PRIVATE ACCESS</div>
+    <h1>Secure Mail Console</h1>
+    <p class="muted">Enter your password to continue.</p>
 
 {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
 
-<div class="login-error">
-
-<i class="fa-solid fa-circle-exclamation"></i>
-
-{{ error }}
-
-</div>
-
-{% endif %}
-
-
-<button
-type="submit"
-class="login-button"
->
-
-<i class="fa-solid fa-right-to-bracket"></i>
-
-Login
-
-</button>
-
-
-</form>
-
-
-<div class="login-footer">
-
-<i class="fa-solid fa-shield-halved"></i>
-
-Secure Mail Console
-
-</div>
-
-
-</div>
-
-
-<script>
-
-const password =
-document.getElementById(
-    "password"
-);
-
-
-const button =
-document.getElementById(
-    "showPassword"
-);
-
-
-button.addEventListener(
-    "click",
-    function() {
-
-        if (
-            password.type ===
-            "password"
-        ) {
-
-            password.type =
-                "text";
-
-            this.innerHTML =
-                '<i class="fa-regular fa-eye-slash"></i>';
-
-        } else {
-
-            password.type =
-                "password";
-
-            this.innerHTML =
-                '<i class="fa-regular fa-eye"></i>';
-
-        }
-
-    }
-);
-
-</script>
-
+<form method="post" action="{{ url_for('login') }}">
+      <label>Login password
+        <input type="password" name="password" required autofocus autocomplete="current-password">
+      </label>
+      <button class="btn primary full" type="submit">Log in</button>
+    </form>
+  </main>
 </body>
 </html>
+</CodeBlock>
