@@ -1,8 +1,27 @@
-<!doctype html>
+
+<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login | Secure Mail Console</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
-<body class="login-page"><main class="login-card">
-<div class="eyebrow">PRIVATE ACCESS</div><h1>Secure Mail Console</h1><p class="muted">Enter your password to continue.</p>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
-<form method="post" action="{{ url_for('login') }}"><label>Login password<input type="password" name="password" required autofocus autocomplete="current-password"></label><button class="btn primary full" type="submit">Log in</button></form>
-</main></body></html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Bulk Email Sender</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="app-title">➤ Bulk Email Sender</div>
+    <p>Sign in to continue to your workspace.</p>
+
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('login') }}">
+      <label for="password">Workspace Password</label>
+      <input id="password" name="password" type="password"
+             placeholder="Enter password" autocomplete="current-password" required>
+      <button class="primary-btn" type="submit">Sign in ›</button>
+    </form>
+  </main>
+</body>
+</html>
