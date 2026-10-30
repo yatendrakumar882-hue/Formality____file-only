@@ -84,7 +84,7 @@ MAX_RECIPIENTS = 25
 SEND_DELAY_SECONDS = 0
 
 # Maximum simultaneous SMTP workers.
-MAX_PARALLEL_SENDS = 6
+MAX_PARALLEL_SENDS = 4
 
 
 # =========================================================
