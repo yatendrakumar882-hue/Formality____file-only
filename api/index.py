@@ -74,7 +74,7 @@ SMTP_TIMEOUT = 20
 MAX_RECIPIENTS = 25
 
 # Four simultaneous SMTP workers
-MAX_PARALLEL_SENDS = 2
+MAX_PARALLEL_SENDS = 1
 
 # Original additional delay
 SEND_DELAY_SECONDS = 0
