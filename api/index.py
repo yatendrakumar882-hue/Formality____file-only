@@ -22,7 +22,7 @@ from flask import (
 
 
 # =====================================================
-# APP CONFIGURATION
+# FLASK CONFIGURATION
 # =====================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,7 +31,7 @@ app = Flask(
     __name__,
     template_folder=str(BASE_DIR / "templates"),
     static_folder=str(BASE_DIR / "static"),
-    static_url_path="/static"
+    static_url_path="/static",
 )
 
 handler = app
@@ -64,7 +64,7 @@ app.config.update(
 
 
 # =====================================================
-# SMTP CONFIGURATION
+# SMTP AND SENDING SETTINGS
 # =====================================================
 
 SMTP_HOST = "smtp.gmail.com"
@@ -72,12 +72,10 @@ SMTP_PORT = 465
 SMTP_TIMEOUT = 20
 
 MAX_RECIPIENTS = 25
+MAX_PARALLEL_SENDS = 4
 
-# Four simultaneous SMTP workers
-MAX_PARALLEL_SENDS = 1
-
-# Original additional delay
-SEND_DELAY_SECONDS = 0
+# 100 milliseconds = 0.1 seconds
+SEND_DELAY_SECONDS = 0.1
 
 
 # =====================================================
@@ -108,7 +106,7 @@ def valid_email(value):
 
 
 # =====================================================
-# AUTHENTICATION HELPERS
+# AUTHENTICATION
 # =====================================================
 
 def logged_in():
@@ -118,7 +116,7 @@ def logged_in():
 def error(message, status=400):
     return jsonify({
         "success": False,
-        "message": message
+        "message": message,
     }), status
 
 
@@ -165,7 +163,6 @@ def html_to_text(value):
     )
 
     value = html.unescape(value)
-
     value = re.sub(r"[ \t]+", " ", value)
     value = re.sub(r" *\n *", "\n", value)
     value = re.sub(r"\n{3,}", "\n\n", value)
@@ -199,7 +196,7 @@ def normalize_recipient(item):
         "hi",
         "hello",
         "thanks",
-        "ref_code"
+        "ref_code",
     ):
         recipient[key] = clean(
             item.get(key, ""),
@@ -223,9 +220,8 @@ def personalize(value, recipient):
         "thanks",
         "name",
         "email",
-        "ref_code"
+        "ref_code",
     ):
-
         result = result.replace(
             "{{" + key + "}}",
             recipient.get(key, "")
@@ -244,12 +240,11 @@ def build_message(
     subject,
     body,
     is_html,
-    recipient
+    recipient,
 ):
 
     msg = EmailMessage()
 
-    # Personalized subject
     msg["Subject"] = clean(
         personalize(subject, recipient),
         250
@@ -261,12 +256,9 @@ def build_message(
     ))
 
     msg["To"] = recipient["email"]
-
     msg["Date"] = formatdate(localtime=True)
-
     msg["Message-ID"] = make_msgid()
 
-    # Personalized content
     content = personalize(body, recipient)
 
     if is_html:
@@ -283,14 +275,13 @@ def build_message(
         )
 
     else:
-
         msg.set_content(content)
 
     return msg
 
 
 # =====================================================
-# SEND SINGLE EMAIL
+# SEND ONE EMAIL
 # =====================================================
 
 def send_one(
@@ -300,11 +291,11 @@ def send_one(
     subject,
     body,
     is_html,
-    recipient
+    recipient,
 ):
 
-    if SEND_DELAY_SECONDS:
-        time.sleep(SEND_DELAY_SECONDS)
+    # 100 ms delay per worker
+    time.sleep(SEND_DELAY_SECONDS)
 
     msg = build_message(
         gmail,
@@ -312,7 +303,7 @@ def send_one(
         subject,
         body,
         is_html,
-        recipient
+        recipient,
     )
 
     password = re.sub(
@@ -321,21 +312,15 @@ def send_one(
         app_password
     )
 
-    context = ssl.create_default_context()
-
     with smtplib.SMTP_SSL(
         SMTP_HOST,
         SMTP_PORT,
-        context=context,
-        timeout=SMTP_TIMEOUT
+        context=ssl.create_default_context(),
+        timeout=SMTP_TIMEOUT,
     ) as smtp:
 
         smtp.ehlo()
-
-        smtp.login(
-            gmail,
-            password
-        )
+        smtp.login(gmail, password)
 
         refused = smtp.send_message(
             msg,
@@ -358,10 +343,7 @@ def login():
         return redirect(url_for("home"))
 
     if request.method == "GET":
-        return render_template(
-            "login.html",
-            error=None
-        )
+        return render_template("login.html", error=None)
 
     submitted = str(
         request.form.get("password", "")
@@ -371,7 +353,6 @@ def login():
         submitted,
         LOGIN_PASSWORD
     ):
-
         return render_template(
             "login.html",
             error="Incorrect password."
@@ -385,19 +366,18 @@ def login():
 
 
 # =====================================================
-# LOGOUT ROUTE
+# LOGOUT
 # =====================================================
 
 @app.route("/logout", methods=["GET", "POST"])
 def logout():
 
     session.clear()
-
     return redirect(url_for("login"))
 
 
 # =====================================================
-# HOME ROUTE
+# HOME
 # =====================================================
 
 @app.route("/")
@@ -421,7 +401,7 @@ def health():
         "smtp": "Gmail SMTP SSL",
         "max_recipients": MAX_RECIPIENTS,
         "max_parallel_sends": MAX_PARALLEL_SENDS,
-        "send_delay_seconds": SEND_DELAY_SECONDS
+        "send_delay_seconds": SEND_DELAY_SECONDS,
     })
 
 
@@ -440,7 +420,6 @@ def favicon():
 
 @app.route("/sw.js")
 def service_worker():
-
     return Response(
         "",
         mimetype="application/javascript"
@@ -454,13 +433,11 @@ def service_worker():
 @app.route("/send-batch", methods=["POST"])
 def send_batch():
 
-    # Authentication
     if not logged_in():
-
         return jsonify({
             "success": False,
             "message": "Please log in again.",
-            "login_required": True
+            "login_required": True,
         }), 401
 
     data = request.get_json(silent=True)
@@ -468,7 +445,6 @@ def send_batch():
     if not isinstance(data, dict):
         return error("Invalid JSON request.")
 
-    # Input fields
     sender_name = clean(
         data.get("sender_name", ""),
         150
@@ -488,15 +464,10 @@ def send_batch():
         250
     )
 
-    body = str(
-        data.get("body", "")
-    )
-
+    body = str(data.get("body", ""))
     is_html = data.get("is_html") is True
-
     incoming = data.get("recipients", [])
 
-    # Sender validation
     if (
         not sender_name
         or not valid_email(gmail)
@@ -506,7 +477,6 @@ def send_batch():
             "Enter a valid Gmail sender address and name."
         )
 
-    # Required fields
     if not password or not subject or not body.strip():
         return error(
             "App Password, subject and body are required."
@@ -518,13 +488,11 @@ def send_batch():
     if not isinstance(incoming, list):
         return error("Recipients must be a list.")
 
-    # Consent
     if data.get("consent_confirmed") is not True:
         return error(
             "Confirm recipients have permission to receive this email."
         )
 
-    # Normalize recipients
     recipients = []
     seen = set()
     invalid = 0
@@ -553,9 +521,9 @@ def send_batch():
             f"Maximum {MAX_RECIPIENTS} unique recipients per batch."
         )
 
-    # =================================================
+    # -------------------------------------------------
     # STREAMING GENERATOR
-    # =================================================
+    # -------------------------------------------------
 
     def generate():
 
@@ -569,10 +537,9 @@ def send_batch():
             "sent": 0,
             "failed": 0,
             "remaining": total,
-            "invalid_skipped": invalid
+            "invalid_skipped": invalid,
         })
 
-        # Exactly 4 maximum workers
         with ThreadPoolExecutor(
             max_workers=min(
                 MAX_PARALLEL_SENDS,
@@ -589,9 +556,8 @@ def send_batch():
                     subject,
                     body,
                     is_html,
-                    recipient
+                    recipient,
                 ): recipient
-
                 for recipient in recipients
             }
 
@@ -607,7 +573,7 @@ def send_batch():
                     item = {
                         "type": "progress",
                         "recipient": recipient["email"],
-                        "result": "sent"
+                        "result": "sent",
                     }
 
                 except smtplib.SMTPAuthenticationError:
@@ -621,7 +587,7 @@ def send_batch():
                         "error": (
                             "Gmail authentication failed. "
                             "Check Gmail address and App Password."
-                        )
+                        ),
                     }
 
                 except smtplib.SMTPRecipientsRefused:
@@ -632,7 +598,7 @@ def send_batch():
                         "type": "progress",
                         "recipient": recipient["email"],
                         "result": "failed",
-                        "error": "Gmail refused this recipient."
+                        "error": "Gmail refused this recipient.",
                     }
 
                 except smtplib.SMTPResponseException as exc:
@@ -655,13 +621,13 @@ def send_batch():
                         "error": (
                             f"SMTP error {exc.smtp_code}: "
                             f"{detail[:200]}"
-                        )
+                        ),
                     }
 
                 except (
                     smtplib.SMTPException,
                     TimeoutError,
-                    OSError
+                    OSError,
                 ) as exc:
 
                     failed += 1
@@ -672,7 +638,7 @@ def send_batch():
                         "result": "failed",
                         "error": (
                             f"SMTP/network error: {str(exc)[:200]}"
-                        )
+                        ),
                     }
 
                 except Exception as exc:
@@ -689,36 +655,34 @@ def send_batch():
                         "result": "failed",
                         "error": (
                             f"Unexpected error: {type(exc).__name__}"
-                        )
+                        ),
                     }
 
-                # Progress counts
                 item.update({
                     "total": total,
                     "sent": sent,
                     "failed": failed,
-                    "remaining": total - sent - failed
+                    "remaining": total - sent - failed,
                 })
 
                 yield event_line(item)
 
-        # Final result
         yield event_line({
             "type": "complete",
             "success": failed == 0,
             "message": (
                 "Sending attempt finished. "
-                "Gmail acceptance does not confirm Inbox placement."
+                "Gmail acceptance does not confirm Inbox delivery."
             ),
             "total": total,
             "sent": sent,
             "failed": failed,
-            "remaining": 0
+            "remaining": 0,
         })
 
-    # =================================================
-    # RESPONSE
-    # =================================================
+    # -------------------------------------------------
+    # STREAM RESPONSE
+    # -------------------------------------------------
 
     response = Response(
         generate(),
@@ -730,7 +694,6 @@ def send_batch():
     )
 
     response.headers["X-Content-Type-Options"] = "nosniff"
-
     response.headers["X-Accel-Buffering"] = "no"
 
     return response
