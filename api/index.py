@@ -2,10 +2,10 @@
 import os
 import re
 import ssl
-import time
 import json
-import html
 import hmac
+import html
+import time
 import hashlib
 import smtplib
 import logging
@@ -27,7 +27,6 @@ from flask import (
     jsonify,
     session,
     Response,
-    stream_with_context,
 )
 
 from jinja2 import TemplateNotFound
@@ -53,32 +52,32 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================
-# ENVIRONMENT / SESSION CONFIGURATION
+# SECURITY CONFIGURATION
 # =====================================================
 
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
 LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "").strip()
 
-# Prefer the dedicated stable SESSION_SECRET.
-# The fallback is deterministic, so Vercel instances do not
-# generate different session keys on each cold start.
+# Use a dedicated stable secret when configured.
+# Deterministic fallback avoids a new random key on every
+# Vercel cold start, which would invalidate existing sessions.
 if SESSION_SECRET:
     SESSION_KEY = SESSION_SECRET
 
 elif LOGIN_PASSWORD:
     SESSION_KEY = hashlib.sha256(
-        ("bulk-email-session-v1:" + LOGIN_PASSWORD).encode("utf-8")
+        ("bulk-email-session-v2:" + LOGIN_PASSWORD).encode("utf-8")
     ).hexdigest()
 
     logger.warning(
-        "SESSION_SECRET is missing. A stable key is being derived "
-        "from LOGIN_PASSWORD. Configure a dedicated SESSION_SECRET."
+        "SESSION_SECRET is missing. Using a stable derived key. "
+        "Configure a dedicated random SESSION_SECRET in Vercel."
     )
 
 else:
     SESSION_KEY = None
     logger.error(
-        "SESSION_SECRET and LOGIN_PASSWORD are both missing."
+        "LOGIN_PASSWORD and SESSION_SECRET are not configured."
     )
 
 app.secret_key = SESSION_KEY or "unconfigured-session-key"
@@ -93,7 +92,7 @@ app.config.update(
 
 
 # =====================================================
-# SMTP / SENDING SETTINGS
+# SMTP CONFIGURATION
 # =====================================================
 
 SMTP_HOST = "smtp.gmail.com"
@@ -103,8 +102,7 @@ SMTP_TIMEOUT = 20
 MAX_RECIPIENTS = 25
 MAX_PARALLEL_SENDS = 5
 
-# Original sending interval retained.
-# This is a pacing interval, not an inbox-delivery guarantee.
+# Original speed setting retained.
 SEND_DELAY_SECONDS = 0.1
 
 _pacing_lock = threading.Lock()
@@ -155,7 +153,7 @@ def event_line(data):
 
 
 # =====================================================
-# LOGIN FALLBACK
+# LOGIN FALLBACK TEMPLATE
 # =====================================================
 
 LOGIN_FALLBACK = """
@@ -481,7 +479,7 @@ def login():
 
     if not SESSION_KEY:
         return show_login(
-            "Session configuration is missing. Set SESSION_SECRET in Vercel.",
+            "Session configuration is missing. Set SESSION_SECRET.",
             503
         )
 
@@ -537,7 +535,7 @@ def home():
 
         return (
             "templates/index.html was not found. "
-            "Please check your GitHub project.",
+            "Check your GitHub project files.",
             500
         )
 
@@ -617,7 +615,9 @@ def send_batch():
         250
     )
 
-    body = str(data.get("body", ""))
+    body = str(
+        data.get("body", "")
+    )
 
     is_html = data.get("is_html") is True
     incoming = data.get("recipients", [])
@@ -644,7 +644,7 @@ def send_batch():
 
     if data.get("consent_confirmed") is not True:
         return error(
-            "Confirm that recipients have permission to receive these emails."
+            "Confirm recipients have permission to receive these emails."
         )
 
     recipients = []
@@ -676,7 +676,7 @@ def send_batch():
         )
 
     # -------------------------------------------------
-    # PROGRESS STREAM
+    # NDJSON PROGRESS STREAM
     # -------------------------------------------------
 
     def generate():
@@ -832,7 +832,7 @@ def send_batch():
         })
 
     response = Response(
-        stream_with_context(generate()),
+        generate(),
         content_type="application/x-ndjson; charset=utf-8"
     )
 
