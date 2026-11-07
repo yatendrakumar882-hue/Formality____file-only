@@ -101,7 +101,7 @@ SMTP_PORT = 465
 SMTP_TIMEOUT = 20
 
 MAX_RECIPIENTS = 25
-MAX_PARALLEL_SENDS = 2
+MAX_PARALLEL_SENDS = 5
 
 # Original sending interval retained.
 # This is a pacing interval, not an inbox-delivery guarantee.
