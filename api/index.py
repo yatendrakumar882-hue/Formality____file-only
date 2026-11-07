@@ -58,26 +58,24 @@ logger = logging.getLogger(__name__)
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
 LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "").strip()
 
-# Use a dedicated stable secret when configured.
-# Deterministic fallback avoids a new random key on every
-# Vercel cold start, which would invalidate existing sessions.
 if SESSION_SECRET:
     SESSION_KEY = SESSION_SECRET
 
 elif LOGIN_PASSWORD:
+    # Stable fallback: does not change on Vercel cold starts.
     SESSION_KEY = hashlib.sha256(
-        ("bulk-email-session-v2:" + LOGIN_PASSWORD).encode("utf-8")
+        ("secure-mail-console:" + LOGIN_PASSWORD).encode("utf-8")
     ).hexdigest()
 
     logger.warning(
-        "SESSION_SECRET is missing. Using a stable derived key. "
-        "Configure a dedicated random SESSION_SECRET in Vercel."
+        "SESSION_SECRET missing. Using stable derived key. "
+        "Configure a dedicated SESSION_SECRET in Vercel."
     )
 
 else:
     SESSION_KEY = None
     logger.error(
-        "LOGIN_PASSWORD and SESSION_SECRET are not configured."
+        "LOGIN_PASSWORD and SESSION_SECRET are missing."
     )
 
 app.secret_key = SESSION_KEY or "unconfigured-session-key"
@@ -92,7 +90,7 @@ app.config.update(
 
 
 # =====================================================
-# SMTP CONFIGURATION
+# SMTP SETTINGS
 # =====================================================
 
 SMTP_HOST = "smtp.gmail.com"
@@ -102,7 +100,7 @@ SMTP_TIMEOUT = 20
 MAX_RECIPIENTS = 25
 MAX_PARALLEL_SENDS = 5
 
-# Original speed setting retained.
+# Original sending speed retained.
 SEND_DELAY_SECONDS = 0.1
 
 _pacing_lock = threading.Lock()
@@ -153,7 +151,7 @@ def event_line(data):
 
 
 # =====================================================
-# LOGIN FALLBACK TEMPLATE
+# LOGIN FALLBACK
 # =====================================================
 
 LOGIN_FALLBACK = """
@@ -162,12 +160,11 @@ LOGIN_FALLBACK = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bulk Email Sender - Login</title>
+<title>Secure Mail Console</title>
 <style>
-* { box-sizing: border-box; }
 body {
     font-family: Arial, sans-serif;
-    background: #f4f5f7;
+    background: #f4f6fb;
     display: grid;
     place-items: center;
     min-height: 100vh;
@@ -176,42 +173,37 @@ body {
 .box {
     background: white;
     padding: 30px;
-    border-radius: 12px;
+    border-radius: 14px;
     width: min(380px, 90%);
     box-shadow: 0 4px 20px #0001;
 }
 input, button {
+    box-sizing: border-box;
     width: 100%;
     padding: 12px;
     margin-top: 12px;
-    border-radius: 6px;
 }
-input { border: 1px solid #ccc; }
+input { border: 1px solid #ddd; border-radius: 7px; }
 button {
-    cursor: pointer;
-    border: none;
-    background: #222;
+    background: #3457db;
     color: white;
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
 }
 .error { color: #b00020; }
 </style>
 </head>
 <body>
 <div class="box">
-    <h2>Bulk Email Sender</h2>
-    <p>Sign in to continue to your workspace.</p>
+    <h2>Secure Mail Console</h2>
     {% if error %}
-        <p class="error">{{ error }}</p>
+    <p class="error">{{ error }}</p>
     {% endif %}
     <form method="POST" action="/login">
-        <input
-            type="password"
-            name="password"
-            placeholder="Enter password"
-            autocomplete="current-password"
-            required
-        >
-        <button type="submit">Sign in</button>
+        <input type="password" name="password"
+               placeholder="Enter password" required>
+        <button type="submit">Login</button>
     </form>
 </div>
 </body>
@@ -227,7 +219,7 @@ def show_login(message=None, status=200):
         ), status
 
     except TemplateNotFound:
-        logger.exception("login.html template missing")
+        logger.exception("login.html not found")
 
         return render_template_string(
             LOGIN_FALLBACK,
@@ -417,7 +409,7 @@ def send_one(
     recipient
 ):
 
-    message = build_message(
+    msg = build_message(
         gmail,
         sender_name,
         subject,
@@ -447,7 +439,7 @@ def send_one(
         smtp.login(gmail, password)
 
         refused = smtp.send_message(
-            message,
+            msg,
             from_addr=gmail,
             to_addrs=[recipient["email"]]
         )
@@ -470,16 +462,14 @@ def login():
         return show_login()
 
     if not LOGIN_PASSWORD:
-        logger.error("LOGIN_PASSWORD is missing.")
-
         return show_login(
-            "LOGIN_PASSWORD is missing in Vercel Environment Variables.",
+            "LOGIN_PASSWORD is missing in Vercel settings.",
             503
         )
 
     if not SESSION_KEY:
         return show_login(
-            "Session configuration is missing. Set SESSION_SECRET.",
+            "Session configuration is missing.",
             503
         )
 
@@ -531,11 +521,10 @@ def home():
 
     except TemplateNotFound:
 
-        logger.exception("index.html template missing")
+        logger.exception("index.html missing")
 
         return (
-            "templates/index.html was not found. "
-            "Check your GitHub project files.",
+            "templates/index.html was not found.",
             500
         )
 
@@ -555,7 +544,6 @@ def health():
         "send_delay_seconds": SEND_DELAY_SECONDS,
         "login_password_configured": bool(LOGIN_PASSWORD),
         "session_secret_configured": bool(SESSION_SECRET),
-        "session_key_available": bool(SESSION_KEY),
     })
 
 
@@ -570,10 +558,7 @@ def favicon():
 
 @app.route("/sw.js")
 def service_worker():
-    return Response(
-        "",
-        mimetype="application/javascript"
-    )
+    return Response("", mimetype="application/javascript")
 
 
 # =====================================================
@@ -676,7 +661,7 @@ def send_batch():
         )
 
     # -------------------------------------------------
-    # NDJSON PROGRESS STREAM
+    # PROGRESS STREAM
     # -------------------------------------------------
 
     def generate():
@@ -694,9 +679,11 @@ def send_batch():
             "invalid_skipped": invalid,
         })
 
-        with ThreadPoolExecutor(
+        executor = ThreadPoolExecutor(
             max_workers=min(MAX_PARALLEL_SENDS, total)
-        ) as executor:
+        )
+
+        try:
 
             jobs = {
                 executor.submit(
@@ -735,10 +722,7 @@ def send_batch():
                         "type": "progress",
                         "recipient": recipient["email"],
                         "result": "failed",
-                        "error": (
-                            "Gmail authentication failed. "
-                            "Check Gmail App Password."
-                        ),
+                        "error": "Gmail authentication failed. Check your App Password.",
                     }
 
                 except smtplib.SMTPRecipientsRefused:
@@ -787,9 +771,7 @@ def send_batch():
                         "type": "progress",
                         "recipient": recipient["email"],
                         "result": "failed",
-                        "error": (
-                            f"SMTP/network error: {str(exc)[:200]}"
-                        ),
+                        "error": f"SMTP/network error: {str(exc)[:200]}",
                     }
 
                 except Exception as exc:
@@ -797,16 +779,15 @@ def send_batch():
                     failed += 1
 
                     logger.exception(
-                        "Unexpected email sending error"
+                        "Unexpected sending error for %s",
+                        recipient["email"]
                     )
 
                     item = {
                         "type": "progress",
                         "recipient": recipient["email"],
                         "result": "failed",
-                        "error": (
-                            f"Unexpected error: {type(exc).__name__}"
-                        ),
+                        "error": f"Unexpected error: {type(exc).__name__}",
                     }
 
                 item.update({
@@ -818,18 +799,21 @@ def send_batch():
 
                 yield event_line(item)
 
-        yield event_line({
-            "type": "complete",
-            "success": failed == 0,
-            "message": (
-                "SMTP sending attempts finished. "
-                "SMTP acceptance does not confirm Inbox delivery."
-            ),
-            "total": total,
-            "sent": sent,
-            "failed": failed,
-            "remaining": 0,
-        })
+            yield event_line({
+                "type": "complete",
+                "success": failed == 0,
+                "message": (
+                    "All sending attempts completed. "
+                    "Gmail acceptance does not confirm Inbox delivery."
+                ),
+                "total": total,
+                "sent": sent,
+                "failed": failed,
+                "remaining": 0,
+            })
+
+        finally:
+            executor.shutdown(wait=True)
 
     response = Response(
         generate(),
