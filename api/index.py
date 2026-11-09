@@ -12,6 +12,7 @@ import threading
 
 from pathlib import Path
 from datetime import timedelta
+from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid, formatdate
@@ -44,6 +45,7 @@ app = Flask(
     static_url_path="/static",
 )
 
+# Vercel WSGI handler
 handler = app
 
 logging.basicConfig(level=logging.INFO)
@@ -57,13 +59,7 @@ logger = logging.getLogger(__name__)
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
 LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "").strip()
 
-# Fail closed if security settings are missing.
-if not SESSION_SECRET:
-    logger.error("SESSION_SECRET is missing.")
-
-if not LOGIN_PASSWORD:
-    logger.error("LOGIN_PASSWORD is missing.")
-
+# Dedicated stable secret is required.
 app.secret_key = SESSION_SECRET or None
 
 app.config.update(
@@ -86,7 +82,7 @@ SMTP_TIMEOUT = 20
 MAX_RECIPIENTS = 25
 MAX_PARALLEL_SENDS = 2
 
-# SAME SENDING SPEED
+# SAME ORIGINAL SENDING SPEED
 SEND_DELAY_SECONDS = 0.1
 
 _pacing_lock = threading.Lock()
@@ -104,6 +100,7 @@ EMAIL_RE = re.compile(
 
 
 def clean(value, limit=250):
+    """Remove header-breaking characters and limit input size."""
     value = str(value or "")
     value = value.replace("\r", " ").replace("\n", " ")
     return value.strip()[:limit]
@@ -133,41 +130,60 @@ def error(message, status=400):
 
 
 def event_line(data):
-    return json.dumps(data, ensure_ascii=False) + "\n"
+    return json.dumps(
+        data,
+        ensure_ascii=False,
+    ) + "\n"
 
 
 # =====================================================
 # HTML TO PLAIN TEXT
 # =====================================================
 
+class PlainTextExtractor(HTMLParser):
+
+    BLOCK_TAGS = {
+        "p", "div", "br", "li", "ul", "ol",
+        "h1", "h2", "h3", "h4", "h5", "h6",
+        "tr", "table", "blockquote",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == "li":
+            self.parts.append("\n- ")
+        elif tag.lower() in self.BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag.lower() in self.BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def get_text(self):
+        value = "".join(self.parts)
+        value = html.unescape(value)
+        value = re.sub(r"[ \t]+", " ", value)
+        value = re.sub(r" *\n *", "\n", value)
+        value = re.sub(r"\n{3,}", "\n\n", value)
+        return value.strip()
+
+
 def html_to_text(value):
-    value = str(value or "")
+    parser = PlainTextExtractor()
 
-    value = re.sub(
-        r"(?i)<\s*br\s*/?\s*>",
-        "\n",
-        value,
-    )
-
-    value = re.sub(
-        r"(?i)</\s*(p|div|li|h[1-6]|tr)\s*>",
-        "\n",
-        value,
-    )
-
-    value = re.sub(
-        r"(?i)<\s*li\b[^>]*>",
-        "- ",
-        value,
-    )
-
-    value = re.sub(r"<[^>]*>", " ", value)
-    value = html.unescape(value)
-    value = re.sub(r"[ \t]+", " ", value)
-    value = re.sub(r" *\n *", "\n", value)
-    value = re.sub(r"\n{3,}", "\n\n", value)
-
-    return value.strip()
+    try:
+        parser.feed(str(value or ""))
+        parser.close()
+        return parser.get_text()
+    except Exception:
+        logger.exception("HTML-to-text conversion failed")
+        return re.sub(r"<[^>]*>", " ", str(value or "")).strip()
 
 
 # =====================================================
@@ -189,7 +205,9 @@ def normalize_recipient(item):
     if not valid_email(address):
         return None
 
-    recipient = {"email": address}
+    recipient = {
+        "email": address,
+    }
 
     for key in (
         "name",
@@ -266,13 +284,19 @@ def build_message(
 
     msg = EmailMessage()
 
-    msg["Subject"] = clean(
+    final_subject = clean(
         personalize(subject, recipient),
         250,
     )
 
+    final_sender_name = clean(
+        sender_name,
+        150,
+    )
+
+    msg["Subject"] = final_subject
     msg["From"] = formataddr((
-        clean(sender_name, 150),
+        final_sender_name,
         gmail,
     ))
 
@@ -324,6 +348,7 @@ def send_one(
         recipient,
     )
 
+    # Keep original sending interval.
     wait_for_send_slot()
 
     password = re.sub(
@@ -353,6 +378,8 @@ def send_one(
         if refused:
             raise smtplib.SMTPRecipientsRefused(refused)
 
+    return True
+
 
 # =====================================================
 # LOGIN
@@ -371,12 +398,16 @@ def login():
         )
 
     if not LOGIN_PASSWORD:
+        logger.error("LOGIN_PASSWORD is missing.")
+
         return render_template(
             "login.html",
             error="LOGIN_PASSWORD is missing in Vercel settings.",
         ), 503
 
     if not SESSION_SECRET:
+        logger.error("SESSION_SECRET is missing.")
+
         return render_template(
             "login.html",
             error="SESSION_SECRET is missing in Vercel settings.",
@@ -511,7 +542,9 @@ def send_batch():
         250,
     )
 
-    body = str(data.get("body", ""))
+    body = str(
+        data.get("body", "")
+    )
 
     is_html = data.get("is_html") is True
     incoming = data.get("recipients", [])
@@ -544,6 +577,7 @@ def send_batch():
     recipients = []
     seen = set()
     invalid = 0
+    duplicates = 0
 
     for item in incoming:
 
@@ -556,6 +590,7 @@ def send_batch():
         address = recipient["email"]
 
         if address in seen:
+            duplicates += 1
             continue
 
         seen.add(address)
@@ -586,6 +621,7 @@ def send_batch():
             "failed": 0,
             "remaining": total,
             "invalid_skipped": invalid,
+            "duplicates_skipped": duplicates,
         })
 
         executor = ThreadPoolExecutor(
@@ -631,7 +667,10 @@ def send_batch():
                         "type": "progress",
                         "recipient": recipient["email"],
                         "result": "failed",
-                        "error": "Gmail authentication failed. Check Gmail App Password.",
+                        "error": (
+                            "Gmail authentication failed. "
+                            "Check Gmail App Password."
+                        ),
                     }
 
                 except smtplib.SMTPRecipientsRefused:
@@ -680,7 +719,9 @@ def send_batch():
                         "type": "progress",
                         "recipient": recipient["email"],
                         "result": "failed",
-                        "error": f"SMTP/network error: {str(exc)[:200]}",
+                        "error": (
+                            f"SMTP/network error: {str(exc)[:200]}"
+                        ),
                     }
 
                 except Exception as exc:
@@ -710,6 +751,7 @@ def send_batch():
                 yield event_line(item)
 
         finally:
+            # Wait for already-submitted tasks.
             executor.shutdown(wait=True)
 
         yield event_line({
@@ -723,6 +765,8 @@ def send_batch():
             "sent": sent,
             "failed": failed,
             "remaining": 0,
+            "invalid_skipped": invalid,
+            "duplicates_skipped": duplicates,
         })
 
     response = Response(
