@@ -6,6 +6,7 @@ import time
 import json
 import html
 import hmac
+import hashlib
 import smtplib
 import logging
 import threading
@@ -57,9 +58,17 @@ logger = logging.getLogger(__name__)
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
 LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "").strip()
 
-# Use a stable secret configured in Vercel.
-# Do not generate a new random secret on every server start.
-app.secret_key = SESSION_SECRET or "unconfigured-session-key"
+# Use a dedicated, stable Vercel environment variable.
+# Do not derive the session-signing key from the login password.
+SESSION_KEY = SESSION_SECRET if len(SESSION_SECRET) >= 32 else None
+
+if SESSION_KEY is None:
+    logger.error(
+        "SESSION_SECRET is missing or shorter than 32 characters. "
+        "Set a stable SESSION_SECRET in Vercel."
+    )
+
+app.secret_key = SESSION_KEY or "unconfigured-session-key"
 
 app.config.update(
     SESSION_COOKIE_SECURE=True,
@@ -71,7 +80,7 @@ app.config.update(
 
 
 # =====================================================
-# SMTP AND SENDING SETTINGS
+# SMTP SETTINGS
 # =====================================================
 
 SMTP_HOST = "smtp.gmail.com"
@@ -80,6 +89,8 @@ SMTP_TIMEOUT = 20
 
 MAX_RECIPIENTS = 25
 MAX_PARALLEL_SENDS = 2
+
+# Original sending interval retained
 SEND_DELAY_SECONDS = 0.1
 
 _pacing_lock = threading.Lock()
@@ -365,15 +376,17 @@ def login():
         )
 
     if not LOGIN_PASSWORD:
+        logger.error("LOGIN_PASSWORD is missing.")
+
         return render_template(
             "login.html",
             error="LOGIN_PASSWORD is missing in Vercel settings."
         ), 503
 
-    if len(SESSION_SECRET) < 32:
+    if not SESSION_KEY:
         return render_template(
             "login.html",
-            error="Set SESSION_SECRET to at least 32 characters in Vercel."
+            error="Session configuration is missing. Set SESSION_SECRET."
         ), 503
 
     submitted = str(
@@ -446,7 +459,8 @@ def health():
         "max_parallel_sends": MAX_PARALLEL_SENDS,
         "send_delay_seconds": SEND_DELAY_SECONDS,
         "login_password_configured": bool(LOGIN_PASSWORD),
-        "session_secret_configured": len(SESSION_SECRET) >= 32,
+        "session_secret_configured": bool(SESSION_SECRET),
+        "session_key_available": bool(SESSION_KEY),
     })
 
 
