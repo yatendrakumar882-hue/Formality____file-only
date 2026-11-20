@@ -97,11 +97,9 @@ SMTP_PORT = 465
 SMTP_TIMEOUT = 20
 
 MAX_RECIPIENTS = 25
-MAX_PARALLEL_SENDS = 9
-
-# Existing sending interval retained.
+MAX_PARALLEL_SENDS = 2  # Two SMTP sends may run concurrently.
+# Slightly faster pacing; Gmail may still rate-limit or defer messages.
 SEND_DELAY_SECONDS = 0.8
-
 _pacing_lock = threading.Lock()
 _last_send_started = 0.0
 
@@ -399,7 +397,7 @@ def login():
         ), 503
 
     submitted = str(
-        request.form.get("password", "")
+        request.form.get("password", request.form.get("login_password", ""))
     )
 
     if not hmac.compare_digest(
