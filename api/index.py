@@ -97,10 +97,10 @@ SMTP_PORT = 465
 SMTP_TIMEOUT = 20
 
 MAX_RECIPIENTS = 25
-MAX_PARALLEL_SENDS = 1
+MAX_PARALLEL_SENDS = 4
 
 # Existing sending interval retained.
-SEND_DELAY_SECONDS = 0.1
+SEND_DELAY_SECONDS = 0.3
 
 _pacing_lock = threading.Lock()
 _last_send_started = 0.0
