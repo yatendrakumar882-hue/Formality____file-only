@@ -53,10 +53,10 @@ h3{font-size:15px}.log{height:310px;overflow:auto;border:1px solid #e7ebf3;borde
 <label class="check"><input id="consent" type="checkbox" required form="sendForm"> I confirm these recipients agreed to receive this email.</label></section>
 <section class="panel">
 <div class="panel-head"><div><div class="eyebrow">LIVE STATUS</div><h2>Progress monitor</h2></div><span id="statePill" class="pill">Ready</span></div>
-<div class="stats"><div class="stat"><span>Total</span><strong id="total">0</strong></div><div class="stat"><span>Sent</span><strong id="sent">0</strong></div><div class="stat"><span>Failed</span><strong id="failed">0</strong></div><div class="stat"><span>Remaining</span><strong id="remaining">0</strong></div></div>
+<div class="stats"><div class="stat"><span>Total</span><strong id="total">0</strong></div><div class="stat"><span>Accepted by Gmail</span><strong id="sent">0</strong></div><div class="stat"><span>Failed</span><strong id="failed">0</strong></div><div class="stat"><span>Remaining</span><strong id="remaining">0</strong></div></div>
 <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div><h3>Activity log</h3>
 <div id="log" class="log" aria-live="polite"><p class="muted">Sending results will appear here.</p></div>
-<p class="footnote">Speed: up to 2 concurrent sends with 0.8-second pacing. Gmail may rate-limit; accepted does not guarantee Inbox delivery.</p>
+<p class="footnote">Speed: 2 concurrent sends, with at least 0.8 seconds between send starts. Gmail may throttle or defer messages. “Accepted by Gmail” does not mean Inbox delivery.</p>
 </section></div></main>
 <script>
 (() => {
@@ -72,7 +72,7 @@ function handleEvent(e) {
   if(stopUi)return; updateCounts(e);
   if(e.type==="start"){ $("statePill").textContent="Sending"; $("status").textContent="Sending started."; logLine(`Started ${e.total} recipient(s).`); }
   else if(e.type==="progress"){const ok=e.result==="sent";logLine(`${ok?"Accepted by Gmail":"Failed"}: ${e.recipient||"Recipient"}${e.error?" — "+e.error:""}`,ok?"success":"failure");}
-  else if(e.type==="complete"){ $("statePill").textContent="Finished"; $("status").textContent=`Finished: ${e.sent} accepted, ${e.failed} failed.`; logLine($("status").textContent); }
+  else if(e.type==="complete"){ $("statePill").textContent="Finished"; $("status").textContent=`Finished: ${e.sent} accepted by Gmail, ${e.failed} failed.`; logLine($("status").textContent); }
   else if(e.type==="error"){ $("status").textContent=e.message||"Sending failed."; logLine($("status").textContent,"failure");}
 }
 $("sendForm").addEventListener("submit", async ev=>{
