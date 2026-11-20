@@ -99,7 +99,7 @@ SMTP_TIMEOUT = 20
 MAX_RECIPIENTS = 25
 MAX_PARALLEL_SENDS = 2  # Two SMTP sends may run concurrently.
 # Slightly faster pacing; Gmail may still rate-limit or defer messages.
-SEND_DELAY_SECONDS = 0.8
+SEND_DELAY_SECONDS = 0.6
 _pacing_lock = threading.Lock()
 _last_send_started = 0.0
 
