@@ -91,7 +91,7 @@ SMTP_TIMEOUT = 20
 MAX_RECIPIENTS = 25
 
 # Sequential sending; avoids opening many simultaneous SMTP connections.
-MAX_PARALLEL_SENDS = 1
+MAX_PARALLEL_SENDS = 2
 
 # No additional artificial delay between send attempts.
 SEND_DELAY_SECONDS = 0.0
