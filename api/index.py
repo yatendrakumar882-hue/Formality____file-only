@@ -98,8 +98,8 @@ SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
 MAX_RECIPIENTS = 25
-MAX_PARALLEL_SENDS = 2
-SEND_DELAY_SECONDS = 1.8
+MAX_PARALLEL_SENDS = 4
+SEND_DELAY_SECONDS = 1.5
 
 
 # =========================================================
