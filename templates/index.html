@@ -5,17 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f3f5fa">
-
     <title>Secure Mail Console</title>
 
     <link rel="stylesheet"
           href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
-    {% if turnstile_enabled %}
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-            async
-            defer></script>
-    {% endif %}
 
     <style>
         * {
@@ -195,26 +188,6 @@
             margin-top: 8px;
             color: #71809b;
             font-size: 12px;
-            line-height: 1.5;
-        }
-
-        .security-box {
-            margin-top: 22px;
-            padding: 17px;
-            background: #f7f9fd;
-            border: 1px solid #e4e9f2;
-            border-radius: 12px;
-        }
-
-        .security-heading {
-            margin-bottom: 12px;
-            font-size: 14px;
-            font-weight: 800;
-        }
-
-        .turnstile-warning {
-            color: #a44b19;
-            font-size: 13px;
             line-height: 1.5;
         }
 
@@ -471,7 +444,7 @@
 
     <div class="dashboard">
 
-        <!-- LEFT: COMPOSE -->
+        <!-- COMPOSE MESSAGE -->
         <section class="card">
 
             <div class="section-title">
@@ -557,37 +530,10 @@
                 </div>
             </div>
 
-            <div class="security-box">
-
-                <div class="security-heading">
-                    <i class="fa-solid fa-shield-halved"></i>
-                    Cloudflare Verification
-                </div>
-
-                {% if turnstile_enabled %}
-
-                <div class="cf-turnstile"
-                     data-sitekey="{{ turnstile_site_key }}"
-                     data-theme="light"
-                     data-callback="turnstileCompleted"
-                     data-expired-callback="turnstileExpired"
-                     data-error-callback="turnstileError">
-                </div>
-
-                {% else %}
-
-                <div class="turnstile-warning">
-                    Turnstile is not enabled. Both Cloudflare keys are required to enable it.
-                </div>
-
-                {% endif %}
-
-            </div>
-
         </section>
 
 
-        <!-- RIGHT: RECIPIENTS AND PROGRESS -->
+        <!-- RECIPIENTS -->
         <section>
 
             <div class="card">
@@ -595,6 +541,7 @@
                 <div class="section-title">
                     <i class="fa-solid fa-users"></i>
                     Recipients
+
                     <span id="recipientCount"
                           style="margin-left:auto;color:#73819b;font-size:12px;">
                         0 found
@@ -625,6 +572,7 @@
             </div>
 
 
+            <!-- PROGRESS -->
             <div class="card" style="margin-top:22px;">
 
                 <div class="section-title">
@@ -691,6 +639,7 @@
 
                 <div class="log">
                     <div class="log-title">Activity Log</div>
+
                     <div id="activityLog">
                         No activity yet.
                     </div>
@@ -719,10 +668,8 @@
 
 let isHTML = false;
 let sending = false;
-let turnstileToken = "";
 let currentController = null;
 let stopRequested = false;
-
 
 const $ = (id) => document.getElementById(id);
 
@@ -760,23 +707,6 @@ function addLog(message, type = "") {
     entry.textContent = message;
 
     container.prepend(entry);
-}
-
-
-function turnstileCompleted(token) {
-    turnstileToken = token || "";
-}
-
-
-function turnstileExpired() {
-    turnstileToken = "";
-    showToast("Cloudflare verification expired. Please verify again.");
-}
-
-
-function turnstileError() {
-    turnstileToken = "";
-    showToast("Cloudflare verification failed. Check the Site Key and domain.");
 }
 
 
@@ -966,13 +896,6 @@ async function sendBatch() {
         return;
     }
 
-    {% if turnstile_enabled %}
-    if (!turnstileToken) {
-        showToast("Complete Cloudflare verification first.");
-        return;
-    }
-    {% endif %}
-
     stopRequested = false;
     currentController = new AbortController();
 
@@ -997,6 +920,7 @@ async function sendBatch() {
                 "Content-Type": "application/json"
             },
             signal: currentController.signal,
+
             body: JSON.stringify({
                 sender_name: senderName,
                 gmail: gmail,
@@ -1005,8 +929,7 @@ async function sendBatch() {
                 body: body,
                 is_html: isHTML,
                 recipients: recipients,
-                consent_confirmed: $("consent").checked,
-                turnstile_token: turnstileToken
+                consent_confirmed: $("consent").checked
             })
         });
 
@@ -1017,7 +940,7 @@ async function sendBatch() {
                 const data = await response.json();
                 message = data.message || message;
             } catch {
-                // Keep fallback error.
+                // Use fallback message.
             }
 
             throw new Error(message);
@@ -1026,6 +949,7 @@ async function sendBatch() {
         let completedEvent = false;
 
         await readNDJSON(response, (event) => {
+
             if (event.type === "start") {
                 updateProgress(
                     event.total,
@@ -1108,23 +1032,26 @@ async function sendBatch() {
             );
 
             showToast("Stopped waiting for progress updates.");
+
         } else {
-            setStatus(error.message || "Sending failed.", "error");
-            showToast(error.message || "Sending failed.");
-            addLog("Request error: " + error.message, "bad");
+            setStatus(
+                error.message || "Sending failed.",
+                "error"
+            );
+
+            showToast(
+                error.message || "Sending failed."
+            );
+
+            addLog(
+                "Request error: " + error.message,
+                "bad"
+            );
         }
 
     } finally {
         setSendingState(false);
         currentController = null;
-
-        {% if turnstile_enabled %}
-        turnstileToken = "";
-
-        if (window.turnstile) {
-            window.turnstile.reset();
-        }
-        {% endif %}
     }
 }
 
@@ -1158,14 +1085,6 @@ function clearAll() {
     updateRecipientCount();
 
     setStatus("Ready to send.");
-
-    {% if turnstile_enabled %}
-    turnstileToken = "";
-
-    if (window.turnstile) {
-        window.turnstile.reset();
-    }
-    {% endif %}
 }
 
 
