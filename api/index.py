@@ -1,15 +1,13 @@
 
 import os
 import re
+import ssl
 import json
 import time
 import html
-import ssl
 import secrets
 import smtplib
 import logging
-import urllib.parse
-import urllib.request
 
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -31,7 +29,15 @@ from flask import (
 
 
 # =========================================================
-# APP CONFIGURATION
+# LOGGING
+# =========================================================
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+# =========================================================
+# PATHS AND FLASK APP
 # =========================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -43,47 +49,36 @@ app = Flask(
     static_url_path="/static",
 )
 
-# Vercel Python handler
+# Vercel Python function entry point
 handler = app
-
-logging.basicConfig(level=logging.INFO)
 
 
 # =========================================================
 # ENVIRONMENT VARIABLES
 # =========================================================
 
-SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "")
 LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "")
 
-TURNSTILE_SITE_KEY = os.environ.get(
-    "TURNSTILE_SITE_KEY", ""
-).strip()
-
-TURNSTILE_SECRET_KEY = os.environ.get(
-    "TURNSTILE_SECRET_KEY", ""
-).strip()
+CONFIG_ERRORS = []
 
 if len(SESSION_SECRET) < 32:
-    raise RuntimeError(
-        "SESSION_SECRET must be set and contain at least 32 characters."
+    CONFIG_ERRORS.append(
+        "SESSION_SECRET is missing or shorter than 32 characters."
     )
 
 if not LOGIN_PASSWORD:
-    raise RuntimeError(
-        "LOGIN_PASSWORD is missing from Vercel Environment Variables."
+    CONFIG_ERRORS.append(
+        "LOGIN_PASSWORD is missing."
     )
 
-if bool(TURNSTILE_SITE_KEY) != bool(TURNSTILE_SECRET_KEY):
-    raise RuntimeError(
-        "Set both Turnstile keys or remove both."
-    )
-
-TURNSTILE_ENABLED = bool(
-    TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY
+# Use a temporary key only to prevent an import-time crash.
+# Login is disabled below until the real secret is configured.
+app.secret_key = (
+    SESSION_SECRET
+    if len(SESSION_SECRET) >= 32
+    else secrets.token_urlsafe(48)
 )
-
-app.secret_key = SESSION_SECRET
 
 app.config.update(
     SESSION_COOKIE_SECURE=True,
@@ -95,7 +90,7 @@ app.config.update(
 
 
 # =========================================================
-# MAIL SETTINGS
+# SMTP SETTINGS
 # =========================================================
 
 SMTP_HOST = "smtp.gmail.com"
@@ -108,7 +103,7 @@ SEND_DELAY_SECONDS = 1.8
 
 
 # =========================================================
-# HELPERS
+# VALIDATION
 # =========================================================
 
 EMAIL_RE = re.compile(
@@ -139,6 +134,19 @@ def is_logged_in():
     return session.get("authenticated") is True
 
 
+def configuration_response():
+    if not CONFIG_ERRORS:
+        return None
+
+    return jsonify({
+        "success": False,
+        "message": (
+            "Vercel configuration is incomplete: "
+            + " ".join(CONFIG_ERRORS)
+        ),
+    }), 503
+
+
 def json_error(message, status=400):
     return jsonify({
         "success": False,
@@ -147,178 +155,10 @@ def json_error(message, status=400):
 
 
 def ndjson(event):
-    return (
-        json.dumps(event, ensure_ascii=False)
-        + "\n"
-    )
-
-
-# =========================================================
-# TURNSTILE VERIFICATION
-# =========================================================
-
-def verify_turnstile(token, remote_ip=None):
-    if not TURNSTILE_ENABLED:
-        return True, None
-
-    if not token:
-        return False, "Cloudflare verification is required. Complete the captcha."
-
-    payload = {
-        "secret": TURNSTILE_SECRET_KEY,
-        "response": token,
-    }
-
-    if remote_ip:
-        payload["remoteip"] = remote_ip
-
-    encoded = urllib.parse.urlencode(payload).encode("utf-8")
-
-    req = urllib.request.Request(
-        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-        data=encoded,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded"
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=12) as response:
-            result = json.loads(
-                response.read().decode("utf-8")
-            )
-
-        if result.get("success") is True:
-            return True, None
-
-        logging.warning(
-            "Turnstile rejected token. Error codes: %s",
-            result.get("error-codes", []),
-        )
-
-        return False, "Cloudflare rejected the verification. Check your Site Key, Secret Key and domain."
-
-    except Exception:
-        logging.exception("Turnstile verification request failed")
-        return False, "Cloudflare verification service could not be reached."
-
-
-# =========================================================
-# LOGIN
-# =========================================================
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if is_logged_in():
-        return redirect(url_for("home"))
-
-    if request.method == "GET":
-        return render_template(
-            "login.html",
-            error=None,
-        )
-
-    password = request.form.get("password", "")
-
-    if not secrets.compare_digest(
-        str(password),
-        str(LOGIN_PASSWORD),
-    ):
-        return render_template(
-            "login.html",
-            error="Incorrect password. Please check LOGIN_PASSWORD in Vercel.",
-        ), 401
-
-    session.clear()
-    session.permanent = True
-    session["authenticated"] = True
-
-    return redirect(url_for("home"))
-
-
-@app.route("/logout", methods=["GET", "POST"])
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
-
-# =========================================================
-# HOME PAGE
-# =========================================================
-
-@app.route("/")
-def home():
-    if not is_logged_in():
-        return redirect(url_for("login"))
-
-    return render_template(
-        "index.html",
-        turnstile_site_key=TURNSTILE_SITE_KEY,
-        turnstile_enabled=TURNSTILE_ENABLED,
-    )
-
-
-# =========================================================
-# RECIPIENT NORMALIZATION
-# =========================================================
-
-def normalize_recipient(item):
-    if isinstance(item, str):
-        return {
-            "email": item.strip().lower(),
-            "name": "",
-            "hi": "",
-            "hello": "",
-            "thanks": "",
-            "ref_code": "",
-        }
-
-    if not isinstance(item, dict):
-        return None
-
-    def safe_value(value, limit=200):
-        return str(value or "").replace(
-            "\r", " "
-        ).replace(
-            "\n", " "
-        ).strip()[:limit]
-
-    return {
-        "email": str(item.get("email", "")).strip().lower(),
-        "name": safe_value(item.get("name")),
-        "hi": safe_value(item.get("hi"), 100),
-        "hello": safe_value(item.get("hello"), 100),
-        "thanks": safe_value(item.get("thanks"), 100),
-        "ref_code": safe_value(item.get("ref_code")),
-    }
-
-
-def clean_recipients(items):
-    output = []
-    seen = set()
-
-    for item in items:
-        recipient = normalize_recipient(item)
-
-        if not recipient:
-            continue
-
-        address = recipient["email"]
-
-        if not valid_email(address):
-            continue
-
-        if address in seen:
-            continue
-
-        seen.add(address)
-        output.append(recipient)
-
-        if len(output) >= MAX_RECIPIENTS:
-            break
-
-    return output
+    return json.dumps(
+        event,
+        ensure_ascii=False,
+    ) + "\n"
 
 
 # =========================================================
@@ -352,7 +192,7 @@ def personalize(value, recipient, html_mode=False):
 
 
 # =========================================================
-# HTML TO TEXT
+# HTML TO PLAIN TEXT
 # =========================================================
 
 def html_to_text(value):
@@ -382,7 +222,69 @@ def html_to_text(value):
 
 
 # =========================================================
-# EMAIL MESSAGE
+# RECIPIENT NORMALIZATION
+# =========================================================
+
+def normalize_recipient(item):
+    if isinstance(item, str):
+        return {
+            "email": item.strip().lower(),
+            "name": "",
+            "hi": "",
+            "hello": "",
+            "thanks": "",
+            "ref_code": "",
+        }
+
+    if not isinstance(item, dict):
+        return None
+
+    def safe_value(value, limit=200):
+        return str(value or "").replace(
+            "\r", " "
+        ).replace(
+            "\n", " "
+        ).strip()[:limit]
+
+    return {
+        "email": str(
+            item.get("email", "")
+        ).strip().lower(),
+
+        "name": safe_value(item.get("name")),
+        "hi": safe_value(item.get("hi"), 100),
+        "hello": safe_value(item.get("hello"), 100),
+        "thanks": safe_value(item.get("thanks"), 100),
+        "ref_code": safe_value(item.get("ref_code")),
+    }
+
+
+def clean_recipients(items):
+    recipients = []
+    seen = set()
+
+    for item in items:
+        recipient = normalize_recipient(item)
+
+        if not recipient:
+            continue
+
+        address = recipient["email"]
+
+        if not valid_email(address):
+            continue
+
+        if address in seen:
+            continue
+
+        seen.add(address)
+        recipients.append(recipient)
+
+    return recipients
+
+
+# =========================================================
+# BUILD EMAIL
 # =========================================================
 
 def build_message(
@@ -393,12 +295,6 @@ def build_message(
     body,
     is_html,
 ):
-    gmail = gmail.strip().lower()
-    recipient = recipient.strip().lower()
-
-    sender_name = clean_header(sender_name, 200)
-    subject = clean_header(subject, 998)
-
     if is_html:
         message = MIMEMultipart("alternative")
 
@@ -425,7 +321,9 @@ def build_message(
         )
 
     message["Subject"] = subject
-    message["From"] = formataddr((sender_name, gmail))
+    message["From"] = formataddr(
+        (sender_name, gmail)
+    )
     message["To"] = recipient
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
@@ -459,27 +357,28 @@ def send_one_email(
         html_mode=is_html,
     )
 
-    if SEND_DELAY_SECONDS:
-        time.sleep(SEND_DELAY_SECONDS)
-
     message = build_message(
         gmail=gmail,
         sender_name=sender_name,
         recipient=recipient,
-        subject=personalized_subject,
+        subject=clean_header(personalized_subject),
         body=personalized_body,
         is_html=is_html,
     )
 
-    context = ssl.create_default_context()
+    # Pacing between worker starts.
+    if SEND_DELAY_SECONDS > 0:
+        time.sleep(SEND_DELAY_SECONDS)
 
-    app_password = re.sub(
+    password = re.sub(
         r"\s+",
         "",
         str(app_password),
     )
 
     try:
+        context = ssl.create_default_context()
+
         with smtplib.SMTP_SSL(
             SMTP_HOST,
             SMTP_PORT,
@@ -488,7 +387,7 @@ def send_one_email(
         ) as server:
 
             server.ehlo()
-            server.login(gmail, app_password)
+            server.login(gmail, password)
 
             refused = server.sendmail(
                 gmail,
@@ -499,7 +398,7 @@ def send_one_email(
             if refused:
                 return {
                     "result": "failed",
-                    "error": "SMTP refused the recipient.",
+                    "error": "SMTP refused this recipient.",
                 }
 
         return {
@@ -508,7 +407,8 @@ def send_one_email(
         }
 
     except smtplib.SMTPAuthenticationError:
-        logging.exception("Gmail authentication failed")
+        logger.exception("Gmail authentication failed")
+
         return {
             "result": "failed",
             "error": "Gmail authentication failed. Check your Gmail App Password.",
@@ -517,24 +417,38 @@ def send_one_email(
     except smtplib.SMTPRecipientsRefused:
         return {
             "result": "failed",
-            "error": "Recipient address was refused by SMTP.",
+            "error": "Recipient address was refused by Gmail SMTP.",
         }
 
     except smtplib.SMTPDataError as exc:
         return {
             "result": "failed",
-            "error": f"SMTP rejected the message. Code: {exc.smtp_code}",
+            "error": (
+                "SMTP rejected the message. "
+                f"SMTP code: {exc.smtp_code}"
+            ),
         }
 
     except (smtplib.SMTPException, OSError, TimeoutError):
-        logging.exception("SMTP sending error for %s", recipient)
+        logger.exception(
+            "SMTP error while sending to %s",
+            recipient,
+        )
+
         return {
             "result": "failed",
-            "error": "SMTP connection or sending error. Check Gmail and recipient status before retrying.",
+            "error": (
+                "SMTP connection or sending error. "
+                "Check the Gmail account and recipient before retrying."
+            ),
         }
 
     except Exception:
-        logging.exception("Unexpected sending error")
+        logger.exception(
+            "Unexpected email error for %s",
+            recipient,
+        )
+
         return {
             "result": "failed",
             "error": "Unexpected sending error.",
@@ -542,11 +456,77 @@ def send_one_email(
 
 
 # =========================================================
-# BATCH SEND API
+# LOGIN
+# =========================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    config_error = configuration_response()
+
+    if config_error:
+        return config_error
+
+    if is_logged_in():
+        return redirect(url_for("home"))
+
+    if request.method == "GET":
+        return render_template(
+            "login.html",
+            error=None,
+        )
+
+    password = request.form.get("password", "")
+
+    if not secrets.compare_digest(
+        str(password),
+        str(LOGIN_PASSWORD),
+    ):
+        return render_template(
+            "login.html",
+            error="Incorrect password. Please check your Vercel LOGIN_PASSWORD.",
+        ), 401
+
+    session.clear()
+    session.permanent = True
+    session["authenticated"] = True
+
+    return redirect(url_for("home"))
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# =========================================================
+# HOME
+# =========================================================
+
+@app.route("/")
+def home():
+    config_error = configuration_response()
+
+    if config_error:
+        return config_error
+
+    if not is_logged_in():
+        return redirect(url_for("login"))
+
+    return render_template("index.html")
+
+
+# =========================================================
+# BATCH SEND
 # =========================================================
 
 @app.route("/send-batch", methods=["POST"])
 def send_batch():
+    config_error = configuration_response()
+
+    if config_error:
+        return config_error
+
     if not is_logged_in():
         return json_error(
             "Your login session expired. Please sign in again.",
@@ -580,18 +560,14 @@ def send_batch():
     body = str(data.get("body", ""))
     is_html = data.get("is_html") is True
 
-    recipients_input = data.get("recipients", [])
+    recipient_input = data.get("recipients", [])
 
     consent_confirmed = (
         data.get("consent_confirmed") is True
     )
 
-    turnstile_token = str(
-        data.get("turnstile_token", "")
-    ).strip()
-
     # -----------------------------------------------------
-    # VALIDATION
+    # INPUT CHECKS
     # -----------------------------------------------------
 
     if not sender_name:
@@ -601,7 +577,7 @@ def send_batch():
         return json_error("Enter a valid Gmail address.")
 
     if not app_password:
-        return json_error("Enter your Gmail App Password.")
+        return json_error("Enter Gmail App Password.")
 
     if not subject:
         return json_error("Enter Email Subject.")
@@ -614,50 +590,26 @@ def send_batch():
 
     if not consent_confirmed:
         return json_error(
-            "Confirm that recipients agreed to receive your email."
+            "Confirm that recipients agreed to receive this email."
         )
 
-    if not isinstance(recipients_input, list):
+    if not isinstance(recipient_input, list):
         return json_error("Recipient list is invalid.")
 
-    recipients = clean_recipients(recipients_input)
+    recipients = clean_recipients(recipient_input)
 
     if not recipients:
-        return json_error("No valid recipient addresses found.")
-
-    if len(recipients_input) > MAX_RECIPIENTS:
-        # Reject oversized requests rather than silently sending a partial list.
-        if len(recipients) >= MAX_RECIPIENTS:
-            return json_error(
-                f"Maximum {MAX_RECIPIENTS} recipients per batch."
-            )
-
-    # -----------------------------------------------------
-    # TURNSTILE
-    # -----------------------------------------------------
-
-    if TURNSTILE_ENABLED:
-        forwarded_for = request.headers.get(
-            "X-Forwarded-For",
-            "",
+        return json_error(
+            "No valid recipient email addresses found."
         )
 
-        remote_ip = (
-            forwarded_for.split(",", 1)[0].strip()
-            if forwarded_for
-            else request.remote_addr
+    if len(recipients) > MAX_RECIPIENTS:
+        return json_error(
+            f"Maximum {MAX_RECIPIENTS} recipients per batch."
         )
-
-        verified, error_message = verify_turnstile(
-            turnstile_token,
-            remote_ip,
-        )
-
-        if not verified:
-            return json_error(error_message, 403)
 
     # -----------------------------------------------------
-    # STREAMING RESPONSE
+    # STREAM PROGRESS
     # -----------------------------------------------------
 
     @stream_with_context
@@ -697,11 +649,13 @@ def send_batch():
 
                 try:
                     result = future.result()
+
                 except Exception:
-                    logging.exception(
-                        "Email worker failed for %s",
+                    logger.exception(
+                        "Worker error for %s",
                         address,
                     )
+
                     result = {
                         "result": "failed",
                         "error": "Unexpected worker error.",
@@ -732,8 +686,7 @@ def send_batch():
             "remaining": total - sent - failed,
             "message": "Sending process completed.",
             "delivery_note": (
-                "Sent means Gmail SMTP accepted the message. "
-                "It does not confirm Inbox placement."
+                "SMTP accepted does not confirm Inbox placement."
             ),
         })
 
@@ -745,6 +698,7 @@ def send_batch():
     response.headers["Cache-Control"] = (
         "no-cache, no-store, no-transform"
     )
+
     response.headers["X-Accel-Buffering"] = "no"
     response.headers["X-Content-Type-Options"] = "nosniff"
 
@@ -760,11 +714,34 @@ def health():
     return jsonify({
         "status": "ok",
         "service": "Secure Mail Console",
-        "smtp": SMTP_HOST,
+        "smtp_host": SMTP_HOST,
         "max_recipients": MAX_RECIPIENTS,
         "parallel_sends": MAX_PARALLEL_SENDS,
-        "turnstile_enabled": TURNSTILE_ENABLED,
+        "configuration_ok": not CONFIG_ERRORS,
+        "configuration_errors": CONFIG_ERRORS,
     })
+
+
+# =========================================================
+# ERROR HANDLERS
+# =========================================================
+
+@app.errorhandler(413)
+def request_too_large(error):
+    return json_error(
+        "Request is too large.",
+        413,
+    )
+
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    logger.exception("Internal server error: %s", error)
+
+    return jsonify({
+        "success": False,
+        "message": "Internal server error. Check Vercel Runtime Logs.",
+    }), 500
 
 
 # =========================================================
